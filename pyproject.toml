@@ -1,0 +1,16 @@
+[project]
+name = "hikarin-studio"
+version = "0.1.0"
+description = "Visual editor for Hikarin visual novel scripts"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.7",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false

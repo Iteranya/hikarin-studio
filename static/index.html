@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hikarin Studio</title>
+<link rel="stylesheet" href="studio.css">
+</head>
+<body>
+
+<!-- ── TOP BAR ─────────────────────────────────────────────────────── -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">H</span>
+    <span class="brand-name">Hikarin Studio</span>
+  </div>
+
+  <div class="project-info" id="project-info">
+    <span class="chip" id="project-name">no project open</span>
+    <span class="chip subtle" id="project-character">—</span>
+  </div>
+
+  <div class="topbar-actions">
+    <button class="btn" id="btn-new" title="Create a new project">New</button>
+    <button class="btn" id="btn-save" title="Save (Ctrl+S)">💾 Save</button>
+    <button class="btn primary" id="btn-play" disabled title="Test this scene">▶ Play</button>
+    <button class="btn" id="btn-export" disabled title="Export a resource pack">📦 Export</button>
+  </div>
+</header>
+
+<!-- ── MAIN ────────────────────────────────────────────────────────── -->
+<main class="workspace">
+
+  <!-- PALETTE -->
+  <aside class="pane palette" id="palette">
+    <div class="pane-head">Blocks</div>
+    <div class="palette-body" id="palette-body">
+      <!-- filled by studio.js -->
+    </div>
+  </aside>
+
+  <!-- CENTRE: tabs + block list -->
+  <section class="pane centre">
+    <div class="tabs" id="tabs">
+      <!-- filled by studio.js -->
+    </div>
+
+    <div class="blocklist" id="blocklist">
+      <div class="empty-state" id="empty-state">
+        <p class="empty-title">No story open</p>
+        <p class="empty-hint">Open a folder, or press <b>New</b> to start one.</p>
+      </div>
+    </div>
+
+    <div class="add-block" id="add-block" hidden>
+      <button class="btn ghost" id="btn-add-block">+ Add block</button>
+    </div>
+  </section>
+
+  <!-- INSPECTOR -->
+  <aside class="pane inspector" id="inspector">
+    <div class="pane-head">Inspector</div>
+    <div class="inspector-body" id="inspector-body">
+      <div class="empty-state small">
+        <p class="empty-hint">Select a block to edit it.</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- OUTLINE -->
+  <aside class="pane outline" id="outline">
+    <div class="pane-head">Outline</div>
+    <div class="outline-body" id="outline-body">
+      <div class="empty-state small">
+        <p class="empty-hint">Labels appear here.</p>
+      </div>
+    </div>
+  </aside>
+
+</main>
+
+<!-- ── STATUS BAR ──────────────────────────────────────────────────── -->
+<footer class="statusbar">
+  <span class="status-item" id="status-blocks">0 blocks</span>
+  <span class="status-item" id="status-labels">0 labels</span>
+  <span class="status-item" id="status-compile">not compiled</span>
+  <span class="status-spacer"></span>
+  <button class="btn tiny" id="btn-compile" disabled>Validate</button>
+</footer>
+
+<!-- ── BLOCK PICKER (modal) ────────────────────────────────────────── -->
+<div class="modal-backdrop" id="picker-backdrop" hidden>
+  <div class="modal" id="picker">
+    <div class="modal-head">
+      <span>Add a block</span>
+      <button class="btn tiny ghost" id="picker-close">✕</button>
+    </div>
+    <div class="picker-body" id="picker-body"></div>
+  </div>
+</div>
+
+<script type="module" src="studio.js"></script>
+</body>
+</html>

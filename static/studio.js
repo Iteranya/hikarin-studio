@@ -1,0 +1,956 @@
+/* Hikarin Studio — editor logic.
+ *
+ * State lives in `state.projects[slug]`. The server owns the files; this module
+ * only needs to render blocks and POST changes back.
+ *
+ * The editor never assigns action ids — the compiler does. Blocks are
+ * {kind, data} and every reference is a label name, so a writer can reorder
+ * tabs and blocks freely without breaking anything.
+ */
+
+const $ = (id) => document.getElementById(id);
+
+// ── state ───────────────────────────────────────────────────────────────────
+
+const state = {
+  meta: null,              // block definitions from /api/meta
+  project: null,           // { slug, meta, files, assets }
+  activeFile: null,
+  selected: null,          // { file, index }
+  dirty: false,
+  lastCompile: null,
+};
+
+// ── boot ────────────────────────────────────────────────────────────────────
+
+async function boot() {
+  state.meta = await fetch('/api/meta').then((r) => r.json());
+  renderPalette();
+  await refreshProjectList();
+  wireChrome();
+}
+
+async function refreshProjectList() {
+  const projects = await fetch('/api/projects').then((r) => r.json());
+  if (projects.length === 0) {
+    setStatus('compile', 'no projects yet — press New', 'warn');
+    return;
+  }
+  // Auto-open the most recently modified project so a reload resumes work.
+  const slug = state.project?.slug ?? projects[projects.length - 1].slug;
+  await openProject(slug);
+}
+
+async function openProject(slug) {
+  const data = await fetch(`/api/projects/${slug}`).then((r) => r.json());
+  state.project = data;
+  state.activeFile = data.meta.files[0] ?? null;
+  state.selected = null;
+  state.dirty = false;
+
+  $('project-name').textContent = data.meta.packName || slug;
+  $('project-character').textContent = data.meta.character || '—';
+  $('btn-play').disabled = false;
+  $('btn-export').disabled = false;
+  $('btn-compile').disabled = false;
+  $('empty-state').hidden = true;
+  $('add-block').hidden = false;
+
+  renderTabs();
+  renderBlocks();
+  renderOutline();
+  renderInspector();
+  updateCounts();
+}
+
+// ── palette ─────────────────────────────────────────────────────────────────
+
+const GROUP_ORDER = ['talk', 'stage', 'flow', 'state', 'audio'];
+
+const GROUP_LABELS = {
+  talk: 'Talk',
+  stage: 'Stage',
+  flow: 'Flow',
+  state: 'State',
+  audio: 'Audio',
+};
+
+const GROUP_COLOURS = {
+  talk: 'var(--talk)',
+  stage: 'var(--stage)',
+  flow: 'var(--flow)',
+  state: 'var(--state)',
+  audio: 'var(--audio)',
+};
+
+const ICONS = {
+  say: '💬', choice: '🔀', nightChoice: '🌙', idle: '🗣️',
+  show: '🎭', hide: '👋', background: '🖼️', clearBackground: '⬛',
+  label: '🏷️', jump: '➡️', if: '❓', next: '⏭️', end: '🏁',
+  setVar: '📝', unlock: '🔓', giveItem: '🎁', takeItem: '✋',
+  music: '🎵', sound: '🔊', command: '⌨️',
+};
+
+const TITLES = {
+  say: 'Say', choice: 'Choice', nightChoice: 'Night Choice', idle: 'Idle Chat',
+  show: 'Show Character', hide: 'Hide Character', background: 'Background',
+  clearBackground: 'Clear Background', label: 'Label', jump: 'Jump', if: 'If',
+  next: 'Next', end: 'End Scene', setVar: 'Set Variable', unlock: 'Unlock',
+  giveItem: 'Give Item', takeItem: 'Take Item', music: 'Music', sound: 'Sound',
+  command: 'Command',
+};
+
+// Blocks the palette shows, in palette order. Not every engine action gets a
+// block: conditional_global and modify_global are legacy aliases the compiler
+// still reads, but authors use the scoped versions.
+const PALETTE = [
+  ['talk', ['say', 'choice', 'nightChoice', 'idle']],
+  ['stage', ['show', 'hide', 'background', 'clearBackground']],
+  ['flow', ['label', 'jump', 'if', 'next', 'end']],
+  ['state', ['setVar', 'unlock', 'giveItem', 'takeItem']],
+  ['audio', ['music', 'sound']],
+];
+
+function groupOf(kind) {
+  for (const [group, kinds] of PALETTE) {
+    if (kinds.includes(kind)) return group;
+  }
+  return 'flow';
+}
+
+function renderPalette() {
+  const body = $('palette-body');
+  body.innerHTML = '';
+
+  for (const [group, kinds] of PALETTE) {
+    const wrap = document.createElement('div');
+    wrap.className = 'group';
+
+    const head = document.createElement('div');
+    head.className = 'group-head';
+    head.innerHTML = `<span class="group-dot" style="background:${GROUP_COLOURS[group]}"></span>${GROUP_LABELS[group]}`;
+    wrap.appendChild(head);
+
+    for (const kind of kinds) {
+      const item = document.createElement('button');
+      item.className = 'palette-item';
+      item.innerHTML = `<span class="palette-icon">${ICONS[kind] ?? '•'}</span>${TITLES[kind] ?? kind}`;
+      item.onclick = () => addBlock(kind);
+      wrap.appendChild(item);
+    }
+    body.appendChild(wrap);
+  }
+}
+
+// ── tabs ────────────────────────────────────────────────────────────────────
+
+function renderTabs() {
+  const tabs = $('tabs');
+  tabs.innerHTML = '';
+
+  for (const file of state.project.meta.files) {
+    const tab = document.createElement('button');
+    tab.className = 'tab' + (file === state.activeFile ? ' active' : '');
+    tab.textContent = file.replace(/\.story$/, '');
+
+    if (file === state.activeFile && state.dirty) {
+      const dot = document.createElement('span');
+      dot.className = 'tab-dirty';
+      dot.textContent = '•';
+      tab.appendChild(dot);
+    }
+
+    tab.onclick = () => {
+      state.activeFile = file;
+      state.selected = null;
+      renderTabs();
+      renderBlocks();
+      renderInspector();
+    };
+    tabs.appendChild(tab);
+  }
+
+  const add = document.createElement('button');
+  add.className = 'tab';
+  add.textContent = '+';
+  add.title = 'New file';
+  add.onclick = newFile;
+  tabs.appendChild(add);
+}
+
+function newFile() {
+  const name = prompt('File name (e.g. night.story or items/endrod.story)');
+  if (!name) return;
+  const clean = name.endsWith('.story') ? name : `${name}.story`;
+  if (state.project.files[clean]) {
+    alert('That file already exists.');
+    return;
+  }
+  state.project.files[clean] = [];
+  state.project.meta.files.push(clean);
+  state.activeFile = clean;
+  state.selected = null;
+  markDirty();
+  renderTabs();
+  renderBlocks();
+  renderInspector();
+  updateCounts();
+}
+
+// ── block list ──────────────────────────────────────────────────────────────
+
+function blocks() {
+  return state.project.files[state.activeFile] ?? [];
+}
+
+function renderBlocks() {
+  const list = $('blocklist');
+  list.innerHTML = '';
+
+  if (!state.activeFile) return;
+  const items = blocks();
+
+  if (items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.innerHTML = '<p class="empty-title">Empty file</p><p class="empty-hint">Add a Label block to start.</p>';
+    list.appendChild(empty);
+    return;
+  }
+
+  items.forEach((block, index) => {
+    const el = document.createElement('div');
+    const group = groupOf(block.kind);
+    el.className = 'block' + (state.selected?.file === state.activeFile && state.selected?.index === index ? ' selected' : '');
+    el.dataset.group = group;
+    if (block.kind === 'label') el.classList.add('block-label');
+
+    el.innerHTML = `
+      <span class="block-icon">${ICONS[block.kind] ?? '•'}</span>
+      <span class="block-text">${summarise(block)}</span>
+    `;
+
+    el.onclick = () => selectBlock(index);
+    list.appendChild(el);
+  });
+}
+
+function summarise(block) {
+  const d = block.data || {};
+  const esc = (s) => String(s ?? '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  const cut = (s, n = 60) => {
+    const text = String(s ?? '');
+    return text.length > n ? `${text.slice(0, n - 1)}…` : text;
+  };
+
+  switch (block.kind) {
+    case 'say':
+      return `<b>${esc(d.label || 'narration')}</b> <span class="block-sub">"${esc(cut(d.content))}"</span>`;
+    case 'choice':
+    case 'nightChoice':
+      return `<span class="block-sub">${(d.choices || []).length} option(s):</span> ${esc((d.choices || []).map((c) => c.display).join(' / '))}`;
+    case 'idle':
+      return '<span class="block-sub">random unlocked line</span>';
+    case 'show':
+      return `<b>${esc(d.sprite || '?')}</b> <span class="block-sub">${esc(d.expression || 'normal')} · ${esc((d.position || 'center').toLowerCase())}</span>`;
+    case 'hide':
+      return `<b>${esc(d.sprite || '?')}</b>`;
+    case 'background':
+      return `<span class="block-sub">${esc(d.background || 'none')}</span>`;
+    case 'clearBackground':
+      return '<span class="block-sub">back to the world</span>';
+    case 'label':
+      return `${esc(d.name || 'unnamed')}`;
+    case 'jump':
+      return `<span class="block-sub">→</span> <b>${esc(d.target || '?')}</b>`;
+    case 'if': {
+      const cond = state.meta?.conditions?.[d.condition] || { label: d.condition };
+      const value = cond.needs_value ? ` ${esc(d.value)}` : '';
+      return `<span class="block-sub">${esc(d.scope || 'scene')}·${esc(d.var || '?')} ${esc(cond.label)}${value} →</span> <b>${esc(d._target || '?')}</b>`;
+    }
+    case 'next':
+      return `<span class="block-sub">remember →</span> <b>${esc(d.target || '?')}</b>`;
+    case 'end':
+      return '<span class="block-sub">close the screen</span>';
+    case 'setVar': {
+      const op = { set: '=', increment_var: '+=', subtract_var: '-=' }[d.operation] || '=';
+      return `<span class="block-sub">${esc(d.scope || 'scene')}·${esc(d.var || '?')} ${op} ${esc(d.value)}</span>`;
+    }
+    case 'unlock':
+      return `<span class="block-sub">+${(d.labels || []).length} idle line(s)</span>`;
+    case 'giveItem':
+    case 'takeItem':
+      return `<b>${esc(d.amount || 1)}x</b> <span class="block-sub">${esc(d.item || '?')}</span>`;
+    case 'music':
+      return d.music ? `♪ ${esc(d.music)}` : '<span class="block-sub">stop music</span>';
+    case 'sound':
+      return `<span class="block-sub">${esc(d.sound || 'none')}</span>`;
+    default:
+      return `<span class="block-sub">${esc(block.kind)}</span>`;
+  }
+}
+
+function selectBlock(index) {
+  state.selected = { file: state.activeFile, index };
+  renderBlocks();
+  renderInspector();
+}
+
+function addBlock(kind) {
+  const items = blocks();
+  const insertAt = state.selected ? state.selected.index + 1 : items.length;
+  items.splice(insertAt, 0, { kind, data: defaultData(kind) });
+  state.selected = { file: state.activeFile, index: insertAt };
+  markDirty();
+  renderBlocks();
+  renderInspector();
+  renderOutline();
+  updateCounts();
+}
+
+function defaultData(kind) {
+  switch (kind) {
+    case 'label':
+      return { name: '' };
+    case 'say':
+      return { label: '', content: '' };
+    case 'choice':
+    case 'nightChoice':
+      return { choices: [{ label: '', display: '' }] };
+    case 'show':
+      return { sprite: '', expression: 'normal', position: 'CENTER' };
+    case 'if':
+      return { scope: '', var: '', condition: 'equal', value: '', _target: '' };
+    case 'setVar':
+      return { scope: '', var: '', operation: 'set', value: '' };
+    case 'giveItem':
+    case 'takeItem':
+      return { item: '', amount: 1 };
+    case 'unlock':
+      return { labels: [] };
+    default:
+      return {};
+  }
+}
+
+// ── inspector ───────────────────────────────────────────────────────────────
+
+function renderInspector() {
+  const body = $('inspector-body');
+  body.innerHTML = '';
+
+  if (!state.selected) {
+    body.innerHTML = '<div class="empty-state small"><p class="empty-hint">Select a block to edit it.</p></div>';
+    return;
+  }
+
+  const { index } = state.selected;
+  const block = blocks()[index];
+  if (!block) {
+    body.innerHTML = '<div class="empty-state small"><p class="empty-hint">Select a block to edit it.</p></div>';
+    return;
+  }
+
+  const title = document.createElement('div');
+  title.className = 'inspector-title';
+  title.innerHTML = `<span>${ICONS[block.kind] ?? '•'}</span>${TITLES[block.kind] ?? block.kind}`;
+  body.appendChild(title);
+
+  block.data ??= {};
+
+  for (const field of fieldsFor(block)) {
+    body.appendChild(renderField(block, field));
+  }
+
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:6px;margin-top:16px;padding-top:10px;border-top:1px solid var(--line)';
+
+  const dup = document.createElement('button');
+  dup.className = 'btn tiny';
+  dup.textContent = 'Duplicate';
+  dup.onclick = () => duplicateBlock();
+
+  const del = document.createElement('button');
+  del.className = 'btn tiny';
+  del.textContent = 'Delete';
+  del.style.color = 'var(--error)';
+  del.onclick = () => deleteBlock();
+
+  actions.append(dup, del);
+  body.appendChild(actions);
+}
+
+function fieldsFor(block) {
+  const d = block.data;
+  const all = [];
+
+  const text = (key, label, placeholder = '', hint = '') =>
+    ({ key, label, render: () => input(text, key, label, placeholder, hint) });
+  const area = (key, label, rows = 3) =>
+    ({ key, label, render: () => textarea(key, label, rows) });
+
+  switch (block.kind) {
+    case 'say':
+      all.push(text('label', 'Speaker', 'Cupa — leave empty for narration'));
+      all.push(area('content', 'Text', 4));
+      break;
+
+    case 'choice':
+    case 'nightChoice':
+      all.push({ key: 'choices', label: 'Options', render: () => choiceEditor(d) });
+      break;
+
+    case 'show':
+      all.push({ key: 'sprite', label: 'Character', render: () => spritePicker(d) });
+      all.push(text('expression', 'Expression', 'normal', 'Image file under assets/<character>/'));
+      all.push({ key: 'position', label: 'Position', render: () => selectEl(d, 'position', state.meta.positions) });
+      break;
+
+    case 'hide':
+      all.push(text('sprite', 'Character', 'cupa'));
+      break;
+
+    case 'background':
+      all.push(text('background', 'Image', 'room.png', 'Under assets/. Leave empty to keep the world.'));
+      break;
+
+    case 'label':
+      all.push(text('name', 'Label name', 'start', 'Jumps target this name. Must be unique across all files.'));
+      break;
+
+    case 'jump':
+      all.push({ key: 'target', label: 'Go to', render: () => labelPicker(d, 'target') });
+      break;
+
+    case 'if': {
+      all.push({ key: 'scope', label: 'Save as', render: () => selectEl(d, 'scope', state.meta.scopes) });
+      all.push(text('var', 'Variable', 'seen.night_01', 'For player facts: advancement.minecraft:nether, inventory_has.minecraft:end_rod'));
+      all.push({ key: 'condition', label: 'Test', render: () => conditionPicker(d) });
+      const cond = state.meta.conditions[d.condition];
+      if (!cond || cond.needs_value) {
+        all.push(text('value', 'Value', 'true / 192 / Cupa', 'Numbers and true/false become real values.'));
+      }
+      all.push({ key: '_target', label: 'If true, jump to', render: () => labelPicker(d, '_target') });
+      break;
+    }
+
+    case 'next':
+      all.push({ key: 'target', label: 'Checkpoint label', render: () => labelPicker(d, 'target') });
+      break;
+
+    case 'setVar':
+      all.push({ key: 'scope', label: 'Save as', render: () => selectEl(d, 'scope', state.meta.scopes) });
+      all.push(text('var', 'Variable', 'affection.cupa'));
+      all.push({
+        key: 'operation', label: 'Change',
+        render: () => selectEl(d, 'operation', [
+          { value: 'set', label: 'set to' },
+          { value: 'increment_var', label: 'add' },
+          { value: 'subtract_var', label: 'subtract' },
+        ]),
+      });
+      all.push(text('value', 'Value', '10'));
+      break;
+
+    case 'unlock':
+      all.push({ key: 'labels', label: 'Labels to unlock', render: () => labelListEditor(d) });
+      break;
+
+    case 'giveItem':
+    case 'takeItem':
+      all.push(text('item', 'Item id', 'minecraft:end_rod'));
+      all.push({ key: 'amount', label: 'Count', render: () => numberInput(d, 'amount', 1) });
+      break;
+
+    case 'music':
+      all.push(text('music', 'Track (empty = stop)', 'haggstrom'));
+      break;
+
+    case 'sound':
+      all.push(text('sound', 'Sound', 'teleport'));
+      break;
+
+    case 'idle':
+    case 'end':
+    case 'clearBackground':
+      // These carry no data. An empty inspector is correct; a text box would
+      // invite the writer to type something the compiler silently drops.
+      break;
+
+    default:
+      break;
+  }
+
+  return all;
+}
+
+// ── field renderers ─────────────────────────────────────────────────────────
+
+// A field descriptor is { key, label, render }. The render function returns an
+// already-wrapped element; this is the single place the inspector calls it, so
+// a field that throws is caught and shown instead of killing the whole panel.
+function renderField(_block, field) {
+  try {
+    return field.render();
+  } catch (err) {
+    const el = document.createElement('div');
+    el.className = 'field';
+    el.innerHTML = `<div class="field-label">${field.label}</div>
+      <div class="field-hint" style="color:var(--error)">Could not render this field: ${String(err.message ?? err)}</div>`;
+    return el;
+  }
+}
+
+
+function wrapField(label, node, hint) {
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+
+  const lab = document.createElement('label');
+  lab.className = 'field-label';
+  lab.textContent = label;
+  wrap.appendChild(lab);
+  wrap.appendChild(node);
+
+  if (hint) {
+    const h = document.createElement('div');
+    h.className = 'field-hint';
+    h.textContent = hint;
+    wrap.appendChild(h);
+  }
+  return wrap;
+}
+
+function commit() {
+  markDirty();
+  renderBlocks();
+  renderOutline();
+  updateCounts();
+}
+
+function input(_kind, key, label, placeholder, hint) {
+  const el = document.createElement('input');
+  el.value = current().data[key] ?? '';
+  el.placeholder = placeholder || '';
+  el.oninput = () => {
+    current().data[key] = el.value;
+    commit();
+  };
+  return wrapField(label, el, hint);
+}
+
+function textarea(key, label, rows) {
+  const el = document.createElement('textarea');
+  el.rows = rows;
+  el.value = current().data[key] ?? '';
+  el.oninput = () => {
+    current().data[key] = el.value;
+    commit();
+  };
+  return wrapField(label, el);
+}
+
+function numberInput(data, key, min = 1) {
+  const el = document.createElement('input');
+  el.type = 'number';
+  el.min = min;
+  el.value = data[key] ?? min;
+  el.oninput = () => {
+    data[key] = Number(el.value) || min;
+    commit();
+  };
+  return wrapField('Count', el);
+}
+
+function selectEl(data, key, options) {
+  const el = document.createElement('select');
+  for (const opt of options) {
+    const option = document.createElement('option');
+    option.value = opt.value;
+    option.textContent = opt.label;
+    el.appendChild(option);
+  }
+  el.value = data[key] ?? '';
+  el.onchange = () => {
+    data[key] = el.value;
+    commit();
+    renderInspector();
+  };
+  return wrapField(key, el);
+}
+
+function conditionPicker(data) {
+  const el = document.createElement('select');
+  for (const [value, def] of Object.entries(state.meta.conditions)) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = def.label;
+    el.appendChild(option);
+  }
+  el.value = data.condition ?? 'equal';
+  el.onchange = () => {
+    data.condition = el.value;
+    commit();
+    renderInspector();
+  };
+  return wrapField('Test', el);
+}
+
+function spritePicker(data) {
+  const chars = Object.keys(state.project.assets?.characters ?? {});
+  if (chars.length === 0) {
+    return input(null, 'sprite', 'Character', 'cupa', 'No sprites found in assets/. Free text for now.');
+  }
+  return selectEl(data, 'sprite', chars.map((c) => ({ value: c, label: c })));
+}
+
+function labelPicker(data, key) {
+  const labels = collectLabels();
+  const el = document.createElement('select');
+
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = '— pick a label —';
+  el.appendChild(blank);
+
+  for (const [file, names] of labels) {
+    const group = document.createElement('optgroup');
+    group.label = file.replace(/\.story$/, '');
+    for (const name of names) {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      group.appendChild(option);
+    }
+    el.appendChild(group);
+  }
+
+  el.value = data[key] ?? '';
+  el.onchange = () => {
+    data[key] = el.value;
+    commit();
+  };
+  return wrapField(key === '_target' ? 'Jump target' : 'Go to', el);
+}
+
+function labelListEditor(data) {
+  const wrap = document.createElement('div');
+  const labels = collectLabels();
+
+  data.labels ??= [];
+
+  const chosen = document.createElement('div');
+  chosen.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px';
+
+  for (const name of data.labels) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = name;
+    chip.style.cursor = 'pointer';
+    chip.title = 'Remove';
+    chip.onclick = () => {
+      data.labels = data.labels.filter((n) => n !== name);
+      commit();
+      renderInspector();
+    };
+    chosen.appendChild(chip);
+  }
+
+  const add = document.createElement('select');
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = '— add a label —';
+  add.appendChild(blank);
+  for (const [file, names] of labels) {
+    for (const name of names) {
+      if (data.labels.includes(name)) continue;
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = `${file.replace(/\.story$/, '')} · ${name}`;
+      add.appendChild(option);
+    }
+  }
+  add.onchange = () => {
+    if (!add.value) return;
+    data.labels.push(add.value);
+    commit();
+    renderInspector();
+  };
+
+  wrap.append(chosen, add);
+  return wrapField('Labels to unlock', wrap, 'These become eligible for Idle Chat.');
+}
+
+function choiceEditor(data) {
+  const wrap = document.createElement('div');
+  data.choices ??= [];
+
+  data.choices.forEach((choice, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 22px;gap:4px;margin-bottom:4px;align-items:center';
+
+    const display = document.createElement('input');
+    display.placeholder = 'Shown text';
+    display.value = choice.display ?? '';
+    display.oninput = () => {
+      choice.display = display.value;
+      commit();
+    };
+
+    const label = document.createElement('select');
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = 'jump to…';
+    label.appendChild(blank);
+    for (const [file, names] of collectLabels()) {
+      const group = document.createElement('optgroup');
+      group.label = file.replace(/\.story$/, '');
+      for (const name of names) {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        group.appendChild(option);
+      }
+      label.appendChild(group);
+    }
+    label.value = choice.label ?? '';
+    label.onchange = () => {
+      choice.label = label.value;
+      commit();
+    };
+
+    const del = document.createElement('button');
+    del.className = 'btn tiny ghost';
+    del.textContent = '✕';
+    del.onclick = () => {
+      data.choices.splice(i, 1);
+      commit();
+      renderInspector();
+    };
+
+    row.append(display, label, del);
+    wrap.appendChild(row);
+  });
+
+  const add = document.createElement('button');
+  add.className = 'btn tiny';
+  add.textContent = '+ option';
+  add.onclick = () => {
+    data.choices.push({ label: '', display: '' });
+    commit();
+    renderInspector();
+  };
+  wrap.appendChild(add);
+
+  return wrapField('Options', wrap);
+}
+
+function current() {
+  return blocks()[state.selected.index];
+}
+
+// ── outline ─────────────────────────────────────────────────────────────────
+
+function collectLabels() {
+  const byFile = new Map();
+  for (const file of state.project?.meta?.files ?? []) {
+    const names = [];
+    for (const block of state.project.files[file] ?? []) {
+      if (block.kind === 'label' && block.data?.name) names.push(block.data.name);
+    }
+    if (names.length) byFile.set(file, names);
+  }
+  return byFile;
+}
+
+function renderOutline() {
+  const body = $('outline-body');
+  body.innerHTML = '';
+
+  const labels = collectLabels();
+  if (labels.size === 0) {
+    body.innerHTML = '<div class="empty-state small"><p class="empty-hint">Labels appear here.</p></div>';
+    return;
+  }
+
+  for (const [file, names] of labels) {
+    const wrap = document.createElement('div');
+    wrap.className = 'outline-file';
+
+    const head = document.createElement('div');
+    head.className = 'outline-file-name';
+    head.textContent = file.replace(/\.story$/, '');
+    wrap.appendChild(head);
+
+    for (const name of names) {
+      const btn = document.createElement('button');
+      btn.className = 'outline-label';
+      btn.textContent = name;
+      btn.onclick = () => {
+        state.activeFile = file;
+        const index = state.project.files[file].findIndex((b) => b.kind === 'label' && b.data?.name === name);
+        state.selected = { file, index };
+        renderTabs();
+        renderBlocks();
+        renderInspector();
+        document.querySelector('.block.selected')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      };
+      wrap.appendChild(btn);
+    }
+    body.appendChild(wrap);
+  }
+}
+
+// ── block ops ───────────────────────────────────────────────────────────────
+
+function duplicateBlock() {
+  const items = blocks();
+  const copy = structuredClone(items[state.selected.index]);
+  items.splice(state.selected.index + 1, 0, copy);
+  state.selected.index += 1;
+  markDirty();
+  renderBlocks();
+  renderInspector();
+  updateCounts();
+}
+
+function deleteBlock() {
+  const items = blocks();
+  items.splice(state.selected.index, 1);
+  state.selected = null;
+  markDirty();
+  renderBlocks();
+  renderInspector();
+  renderOutline();
+  updateCounts();
+}
+
+function markDirty() {
+  state.dirty = true;
+  $('project-name').classList.add('dirty');
+  renderTabs();
+}
+
+function updateCounts() {
+  let total = 0;
+  for (const file of state.project?.meta?.files ?? []) {
+    total += (state.project.files[file] ?? []).length;
+  }
+  const labels = [...collectLabels().values()].reduce((n, arr) => n + arr.length, 0);
+  $('status-blocks').textContent = `${total} block${total === 1 ? '' : 's'}`;
+  $('status-labels').textContent = `${labels} label${labels === 1 ? '' : 's'}`;
+}
+
+function setStatus(which, text, level = '') {
+  const el = $(`status-${which}`);
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'status-item' + (level ? ` ${level}` : '');
+}
+
+// ── chrome ──────────────────────────────────────────────────────────────────
+
+function wireChrome() {
+  $('btn-new').onclick = newProject;
+  $('btn-compile').onclick = validate;
+  $('btn-export').onclick = exportPack;
+  $('btn-save')?.addEventListener('click', save);
+
+  // Ctrl+S saves, Ctrl+Enter validates.
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      save();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      validate();
+    }
+    if (e.key === 'Delete' && state.selected && document.activeElement?.tagName === 'BODY') {
+      deleteBlock();
+    }
+  });
+}
+
+async function newProject() {
+  const slug = prompt('Project name (lowercase, no spaces)');
+  if (!slug) return;
+  const packName = prompt('Story title', slug) || slug;
+
+  const res = await fetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug, meta: { packName, character: slug } }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.detail || 'Could not create the project.');
+    return;
+  }
+  await openProject(slug);
+}
+
+async function save() {
+  if (!state.project) return;
+
+  const body = {
+    meta: state.project.meta,
+    files: {},
+  };
+  for (const file of state.project.meta.files) {
+    body.files[file] = state.project.files[file] ?? [];
+  }
+
+  const res = await fetch(`/api/projects/${state.project.slug}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    alert(err.detail || 'Save failed.');
+    return;
+  }
+
+  state.dirty = false;
+  $('project-name').classList.remove('dirty');
+  renderTabs();
+  setStatus('compile', 'saved', 'ok');
+  setTimeout(() => state.lastCompile && setStatus('compile', state.lastCompile), 2000);
+}
+
+async function validate() {
+  if (!state.project) return;
+  setStatus('compile', 'compiling…');
+
+  const res = await fetch(`/api/projects/${state.project.slug}/compile`);
+  const result = await res.json();
+  state.lastCompile = result;
+
+  const problemCount = result.errors.length + result.warnings.length;
+  if (result.errors.length) {
+    setStatus('compile', `${result.errors.length} error${result.errors.length === 1 ? '' : 's'}`, 'error');
+  } else if (result.warnings.length) {
+    setStatus('compile', `${result.warnings.length} warning${result.warnings.length === 1 ? '' : 's'}`, 'warn');
+  } else {
+    setStatus('compile', `clean · ${result.actionCount} actions`, 'ok');
+  }
+
+  if (problemCount) {
+    const lines = [
+      ...result.errors.map((e) => `ERROR: ${e}`),
+      ...result.warnings.map((w) => `warn:  ${w}`),
+    ];
+    console.log(lines.join('\n'));
+    alert(lines.join('\n'));
+  }
+}
+
+async function exportPack() {
+  if (!state.project) return;
+  window.location = `/api/projects/${state.project.slug}/export`;
+}
+
+boot();

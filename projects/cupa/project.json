@@ -1,0 +1,10 @@
+{
+  "character": "cupa",
+  "packName": "Cupa's Story",
+  "packFormat": 15,
+  "startLabel": "start",
+  "files": [
+    "main.story",
+    "night.story"
+  ]
+}
