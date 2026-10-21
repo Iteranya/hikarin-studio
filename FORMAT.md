@@ -44,8 +44,22 @@ Ids are sequential from 0 and unique. The engine looks actions up by id.
 | `play_sound` | `sound` | |
 | `unlock_dialogues` | `events[]` | adds labels to the idle pool |
 | `idle_chat` | — | jumps to a random unlocked label |
-| `next` | `label` | sets a checkpoint |
+| `next` | `label` | **resume point** — the scene reopens at this label |
 | `finish_dialogue` | — | closes the screen |
+
+## `next` is a real save
+
+`next` writes a checkpoint label. The next time this maid's scene opens, the
+engine jumps straight to that label instead of starting from the top. This
+matches the 2024 engine, which stored `checkpoint` in `localVariables`, saved
+them per entity, and jumped back to it in `loadProgress()`.
+
+A checkpoint pointing at a label that no longer exists logs a warning, clears
+itself, and starts from the top — rather than silently pretending to resume.
+
+`end` (`finish_dialogue`) writes `WORLD` scope to disk. `MAID` and `SCENE`
+values are in the maid's NBT and save with the entity, so they do not depend on
+`end` firing.
 
 ## Scopes
 
@@ -53,10 +67,26 @@ Bare names resolve to `SCENE`. Explicit prefixes select other scopes.
 
 | scope | prefix | lifetime | writable |
 |---|---|---|---|
-| `WORLD` | `@world.` | forever (profile JSON) | yes |
-| `MAID` | `@maid.` | with the entity (NBT) | yes |
-| `SCENE` | `@scene.` | this scene only | yes |
-| `PLAYER` | `@player.` | injected fresh, read-only | no |
+| `SCENE` | `@scene.` | **per maid, survives scene close** (NBT) | yes |
+| `MAID` | `@maid.` | per maid, survives everything else (NBT) | yes |
+| `WORLD` | `@world.` | forever, profile JSON; survives new worlds | yes |
+| `PLAYER` | `@player.` | injected fresh per scene, **read-only** | no |
+
+**`SCENE` is not ephemeral.** Despite the name, bare-name variables are stored
+in the maid's NBT under a `local` compound and outlive the conversation. This
+matches the 2024 engine, where `localVariables` were written to disk per entity
+by `saveProgress()` and restored by `loadProgress()`. A legacy script that
+increments a bare variable across conversations still accumulates.
+
+Use `SCENE` for per-maid working values, `MAID` for explicitly per-maid flags,
+`WORLD` for player-wide progress, and `PLAYER` for read-only world facts.
+
+### The `local` and `@maid.` keyspaces are separate
+
+Bare names live in `TlmVnState.local`, `@maid.` values directly in `TlmVnState`.
+So `affection` and `@maid.affection` are two different variables and will not
+collide. This is deliberate: an explicit scope and a bare name should never
+overwrite each other by accident.
 
 ### Injected every time a scene opens
 

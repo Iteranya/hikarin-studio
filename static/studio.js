@@ -95,7 +95,7 @@ const TITLES = {
   say: 'Say', choice: 'Choice', nightChoice: 'Night Choice', idle: 'Idle Chat',
   show: 'Show Character', hide: 'Hide Character', background: 'Background',
   clearBackground: 'Clear Background', label: 'Label', jump: 'Jump', if: 'If',
-  next: 'Next', end: 'End Scene', setVar: 'Set Variable', unlock: 'Unlock',
+  next: 'Resume Point', end: 'End Scene', setVar: 'Set Variable', unlock: 'Unlock',
   giveItem: 'Give Item', takeItem: 'Take Item', music: 'Music', sound: 'Sound',
   command: 'Command',
 };
@@ -277,7 +277,7 @@ function summarise(block) {
       return `<span class="block-sub">${esc(d.scope || 'scene')}·${esc(d.var || '?')} ${esc(spec.label)}${value} — otherwise →</span> ${target}`;
     }
     case 'next':
-      return `<span class="block-sub">remember →</span> <b>${esc(d.target || '?')}</b>`;
+      return `<span class="block-sub">resume here next time →</span> <b>${esc(d.target || '?')}</b>`;
     case 'end':
       return '<span class="block-sub">close the screen</span>';
     case 'setVar': {
@@ -455,7 +455,7 @@ function fieldsFor(block) {
     }
 
     case 'next':
-      all.push({ key: 'target', label: 'Checkpoint label', render: () => labelPicker(d, 'target') });
+      all.push({ key: 'target', label: 'Resume at', render: () => labelPicker(d, 'target') });
       break;
 
     case 'setVar':

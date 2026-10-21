@@ -74,11 +74,20 @@ affection = 11        -> test fails, falls    -> "Master! You came back!"
 Quick facts are derived from the script, not hardcoded. Each offers the value
 that makes its test FAIL, because that is the branch you cannot reach normally.
 
-**Day and night are not special.** `isNight` and `isDay` are environment
-properties the engine checks before locals and globals, so a script treats them
-exactly like `affection` or a player's health — an ordinary conditional on an
-ordinary name. The only unusual thing about them is that the world sets them
-instead of the player, which is a story-design fact, not a code path.
+**Day and night are not variables.** They are condition *types*:
+`{"condition": "night"}` takes no variable, and the SDK writes a literal
+placeholder (`"Nyaaa~"`) into the `var` slot because nothing reads it. Pick day
+or night in the Test dropdown and the variable fields disappear, because there
+is nothing to name.
+
+**Scenes do not silently lose their variables.** Despite the name, `SCENE`
+(bare names like `visits`) persists in the maid's NBT and survives the
+conversation closing, matching the 2024 engine where `localVariables` were
+saved per entity. A script that increments a bare counter across conversations
+keeps counting.
+
+**`next` is a real resume point.** It stores a label; the next time the scene
+opens, the engine jumps there instead of starting from the top.
 
 ## Conditional semantics — read this before writing anything
 
