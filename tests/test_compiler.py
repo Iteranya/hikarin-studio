@@ -179,3 +179,55 @@ def test_full_spine_compiles_to_valid_json():
 
     # Output must round-trip as JSON.
     json.dumps(r.actions)
+
+
+# ── day / night: condition types, not variables ─────────────────────────────
+#
+# The original SDK writes:
+#   {"type": "conditional", "condition": "night", "var": "Nyaaa~", ...}
+# `var` is a placeholder it never reads. These tests pin that shape so the
+# compiler cannot drift into treating day/night as a variable comparison.
+
+
+def test_night_condition_writes_placeholder_var():
+    files = {"main.story": [
+        block("label", name="start"),
+        block("if", condition="night", _target="done"),
+        block("say", label="Cupa", content="The moon is out."),
+        block("label", name="done"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    assert r.errors == [], r.errors
+    cond = next(a for a in r.actions if a["type"] == "conditional")
+    assert cond["condition"] == "night"
+    assert cond["var"] == "Nyaaa~", "SDK writes a literal placeholder for day/night"
+    assert "value" not in cond, "day/night takes no value"
+
+
+def test_day_condition_takes_no_variable_or_scope():
+    files = {"main.story": [
+        block("label", name="start"),
+        block("if", condition="day", scope="MAID", var="ignored", value="also ignored", _target="done"),
+        block("label", name="done"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    cond = next(a for a in r.actions if a["type"] == "conditional")
+    assert cond["condition"] == "day"
+    assert cond["var"] == "Nyaaa~"
+    assert "scope" not in cond
+    assert "value" not in cond
+
+
+def test_day_night_are_not_harvested_as_suggested_vars():
+    """A day/night gate must not appear as settable state in the preview."""
+    import main as app_module
+
+    files = {"main.story": [
+        block("label", name="start"),
+        block("if", condition="night", _target="done"),
+        block("if", var="affection", condition="less_than", value="10", _target="done"),
+        block("label", name="done"),
+    ]}
+    vars_ = app_module._suggested_variables(files)
+    names = [v["name"] for v in vars_]
+    assert names == ["affection"], names

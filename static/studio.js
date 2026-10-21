@@ -264,9 +264,17 @@ function summarise(block) {
     case 'jump':
       return `<span class="block-sub">→</span> <b>${esc(d.target || '?')}</b>`;
     case 'if': {
-      const cond = state.meta?.conditions?.[d.condition] || { label: d.condition };
-      const value = cond.needs_value ? ` ${esc(d.value)}` : '';
-      return `<span class="block-sub">${esc(d.scope || 'scene')}·${esc(d.var || '?')} ${esc(cond.label)}${value} — otherwise →</span> <b>${esc(d._target || '?')}</b>`;
+      const spec = state.meta?.conditions?.[d.condition] || { label: d.condition, needs_var: true, needs_value: true };
+      const target = `<b>${esc(d._target || '?')}</b>`;
+
+      // Day and night have no variable to name, so reading them out as
+      // "scene·isNight" would invent a concept the engine does not have.
+      if (spec.needs_var === false) {
+        return `<span class="block-sub">${esc(spec.label)} — otherwise →</span> ${target}`;
+      }
+
+      const value = spec.needs_value ? ` ${esc(d.value)}` : '';
+      return `<span class="block-sub">${esc(d.scope || 'scene')}·${esc(d.var || '?')} ${esc(spec.label)}${value} — otherwise →</span> ${target}`;
     }
     case 'next':
       return `<span class="block-sub">remember →</span> <b>${esc(d.target || '?')}</b>`;
@@ -423,13 +431,22 @@ function fieldsFor(block) {
       break;
 
     case 'if': {
-      all.push({ key: 'scope', label: 'Save as', render: () => selectEl(d, 'scope', state.meta.scopes) });
-      all.push(text('var', 'Variable', 'isNight', 'Anything: isNight, affection, seen.night_01, advancement.minecraft:nether'));
+      // The Test dropdown comes first because it decides what the rest of the
+      // form even is. Day and night take no variable and no value, exactly as
+      // in the SDK's condDay/condNight, so those fields disappear rather than
+      // sitting there inviting an answer the engine never reads.
       all.push({ key: 'condition', label: 'Test', render: () => conditionPicker(d) });
-      const cond = state.meta.conditions[d.condition];
-      if (!cond || cond.needs_value) {
+
+      const spec = state.meta.conditions[d.condition] || { needs_var: true, needs_value: true };
+
+      if (spec.needs_var !== false) {
+        all.push({ key: 'scope', label: 'Save as', render: () => selectEl(d, 'scope', state.meta.scopes) });
+        all.push(text('var', 'Variable', 'affection', 'Anything you or the engine sets: affection, seen.night_01, health, advancement.minecraft:nether'));
+      }
+      if (spec.needs_value !== false) {
         all.push(text('value', 'Value', 'true / 192 / Cupa', 'Numbers and true/false become real values.'));
       }
+
       // The engine continues when the test PASSES and jumps when it FAILS, so
       // this field is the "otherwise" branch. Labelling it "if true" inverts
       // every writer's first guess.

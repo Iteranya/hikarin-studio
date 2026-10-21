@@ -178,12 +178,21 @@ def _suggested_variables(files: dict[str, list[dict]]) -> list[dict]:
             kind = block.get("kind")
             if kind not in ("if", "setVar"):
                 continue
+
+            condition = data.get("condition", "equal")
+            spec = CONDITIONS.get(condition, {})
+            needs_var = spec.get("needs_var", True)
+            needs_value = spec.get("needs_value", True)
+
+            # Day and night read no variable. Listing them here would present
+            # them as settable state, which is the exact confusion this check
+            # exists to avoid: they are condition types, not variables.
+            if kind == "if" and not needs_var:
+                continue
+
             name = data.get("var")
             if not name:
                 continue
-
-            condition = data.get("condition", "equal")
-            needs_value = CONDITIONS.get(condition, {}).get("needs_value", True)
 
             if name in found:
                 found[name]["writes"] = found[name]["writes"] or kind == "setVar"

@@ -207,48 +207,24 @@ function renderQuickFacts() {
   const wrap = $('quick-facts');
   wrap.innerHTML = '';
 
-  // Environment keys are offered as ordinary facts. In the engine they are
-  // checked before locals and globals, so `isNight` in a script is not a
-  // special construct — it is a conditional that happens to be set by the
-  // world instead of by the player.
-  //
-  // A script that already reads isNight gets only the env entry, not both.
-  const scriptVars = state.payload.suggestedVars ?? [];
-  const readsEnv = new Set(scriptVars.map((v) => v.name));
+  // Variables only. Day and night are NOT variables — in the engine they are
+  // condition types that read no variable at all, so they belong to the world
+  // toggle above, not to this list where they would imply you can set them.
+  const vars = state.payload.suggestedVars ?? [];
 
-  const env = [
-    { name: 'isNight', current: state.isNight, scope: 'env' },
-    { name: 'isDay', current: !state.isNight, scope: 'env' },
-  ].filter((e) => !readsEnv.has(e.name));
-
-  const vars = [...env, ...scriptVars];
+  if (vars.length === 0) {
+    wrap.innerHTML = '<span class="var-empty">this story reads no variables</span>';
+    return;
+  }
 
   for (const v of vars) {
     const btn = document.createElement('button');
     btn.className = 'fact';
 
-    // Environment facts: the value shown is the state you would switch TO.
-    // There is no "script tests this" here — the script may or may not read it.
-    if (v.scope === 'env') {
-      const target = !v.current;
-      btn.textContent = `${v.name} = ${JSON.stringify(target)}`;
-      btn.title = `Set ${v.name} to ${JSON.stringify(target)} (world state).`;
-      btn.onclick = () => {
-        const night = v.name === 'isNight' ? target : !target;
-        state.isNight = night;
-        $('env-night').checked = night;
-        $('state-night').checked = night;
-        applyEnvironment();
-        renderQuickFacts();
-      };
-      wrap.appendChild(btn);
-      continue;
-    }
-
-    // Script variables: the viewer compares with strict equality against the
-    // raw `value` in the action, so injected state must match its TYPE exactly.
-    // The interesting state is the one that makes the test FAIL — that is the
-    // branch you cannot reach by playing normally.
+    // The viewer compares with strict equality against the raw `value` in the
+    // action, so injected state must match its TYPE: a boolean false never
+    // equals the string "false". The interesting state is the one that makes
+    // the test FAIL, because that is the branch you cannot reach by playing.
     const tested = coerce(v.value);
     const flip = oppositeOf(tested, v.condition);
 
@@ -261,10 +237,6 @@ function renderQuickFacts() {
     btn.onclick = () => setVar(v.name, flip);
 
     wrap.appendChild(btn);
-  }
-
-  if (vars.length === 0) {
-    wrap.innerHTML = '<span class="var-empty">this story reads no variables yet</span>';
   }
 }
 
@@ -328,3 +300,11 @@ function showErrors(errors, warnings = []) {
 }
 
 boot();
+
+// Expose state for debugging in the browser console. The module scope hides
+// everything, which makes a stuck preview impossible to diagnose from outside.
+window.__hikarin = {
+  get state() { return state; },
+  get viewer() { return state.viewer; },
+  get env() { return state.viewer?.runtime?.environment; },
+};

@@ -14,19 +14,34 @@ from __future__ import annotations
 from typing import Any
 
 # ── condition vocabulary ──────────────────────────────────────────────────────
+#
+# The original SDK's heading for these is instructive:
+#
+#     def condNight(self, actions):
+#         result = {"type": "conditional", "action": "conditional",
+#                   "var": "Nyaaa~", "condition": "night", "actions": actions}
+#
+# `var` there is a literal placeholder — the author typed a cat noise because
+# the field is never read. The `condition` value IS the whole test. Day and
+# night take no variable and no value, exactly like `exists` takes none.
+#
+# `needs_var` says whether the writer has to name a variable at all.
 
 CONDITIONS: dict[str, dict[str, Any]] = {
-    "equal": {"label": "is", "needs_value": True},
-    "not_equal": {"label": "is not", "needs_value": True},
-    "greater_than": {"label": "is more than", "needs_value": True},
-    "less_than": {"label": "is less than", "needs_value": True},
-    "greater_or_equal": {"label": "is at least", "needs_value": True},
-    "less_or_equal": {"label": "is at most", "needs_value": True},
-    "exists": {"label": "exists", "needs_value": False},
-    "not_exists": {"label": "does not exist", "needs_value": False},
-    "night": {"label": "it is night", "needs_value": False},
-    "day": {"label": "it is day", "needs_value": False},
+    "equal": {"label": "is", "needs_value": True, "needs_var": True},
+    "not_equal": {"label": "is not", "needs_value": True, "needs_var": True},
+    "greater_than": {"label": "is more than", "needs_value": True, "needs_var": True},
+    "less_than": {"label": "is less than", "needs_value": True, "needs_var": True},
+    "greater_or_equal": {"label": "is at least", "needs_value": True, "needs_var": True},
+    "less_or_equal": {"label": "is at most", "needs_value": True, "needs_var": True},
+    "exists": {"label": "exists", "needs_value": False, "needs_var": True},
+    "not_exists": {"label": "does not exist", "needs_value": False, "needs_var": True},
+    "night": {"label": "it is night", "needs_value": False, "needs_var": False},
+    "day": {"label": "it is day", "needs_value": False, "needs_var": False},
 }
+
+# What the SDK writes into `var` for conditions that do not read it.
+PLACEHOLDER_VAR = "Nyaaa~"
 
 POSITIONS = [
     {"value": "CENTER", "label": "Centre"},
@@ -163,17 +178,23 @@ def _to_action_end(_: dict) -> dict:
 
 def _to_action_if(d: dict) -> dict:
     condition = d.get("condition") or "equal"
+    spec = CONDITIONS.get(condition, {})
+    needs_var = spec.get("needs_var", True)
+
     action: dict[str, Any] = {
         "type": "conditional",
         "action": "conditional",
         "condition": condition,
-        "var": d.get("var") or "",
+        # Day and night read no variable. The SDK writes a literal placeholder
+        # ("Nyaaa~") in that slot; it is ignored by the engine, so writing the
+        # same thing keeps our output byte-comparable with the source material.
+        "var": (d.get("var") or "") if needs_var else PLACEHOLDER_VAR,
         # `end` is resolved to an action id in the second pass.
         "end": 0,
     }
-    if d.get("scope"):
+    if d.get("scope") and needs_var:
         action["scope"] = d["scope"]
-    if CONDITIONS.get(condition, {}).get("needs_value"):
+    if spec.get("needs_value"):
         action["value"] = parse_literal(d.get("value"))
     return action
 

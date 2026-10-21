@@ -8,38 +8,8 @@
   {
     "kind": "if",
     "data": {
-      "scope": "WORLD",
-      "var": "affection",
-      "condition": "less_than",
-      "value": "10",
-      "_target": "warm_check"
-    }
-  },
-  {
-    "kind": "say",
-    "data": {
-      "label": "Cupa",
-      "content": "Oh. It's you. What do you want."
-    }
-  },
-  {
-    "kind": "end",
-    "data": {}
-  },
-  {
-    "kind": "label",
-    "data": {
-      "name": "warm_check"
-    }
-  },
-  {
-    "kind": "if",
-    "data": {
-      "scope": "",
-      "var": "isNight",
-      "condition": "equal",
-      "value": "true",
-      "_target": "morning"
+      "condition": "night",
+      "_target": "day_scene"
     }
   },
   {
@@ -56,7 +26,7 @@
   {
     "kind": "label",
     "data": {
-      "name": "morning"
+      "name": "day_scene"
     }
   },
   {
