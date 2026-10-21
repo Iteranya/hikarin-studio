@@ -10,10 +10,15 @@ Validate it, and export a resource pack Minecraft will load.
 
 ```bash
 uv sync
-uv run main.py
+uv run serve.py
 ```
 
-Open **http://127.0.0.1:8411**
+Open **http://127.0.0.1:8411** (override with `HIKARIN_PORT`).
+
+`serve.py` runs uvicorn without the reloader: a single-process local tool gains
+nothing from it, and the reloader's module cache can keep serving stale routes
+after backend edits — which reads as "my change did not apply" and sends you
+hunting in the wrong file.
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
@@ -49,7 +54,50 @@ first, so you can reorganise tabs freely without changing execution order.
 2. Edit them in the inspector
 3. **Validate** (Ctrl+Enter) — compile errors surface with the file name
 4. **Save** (Ctrl+S) — writes `.story` files to disk
-5. **Export** — a resource pack zip, ready for `resourcepacks/`
+5. **Play** — preview in the browser against simulated state
+6. **Export** — a resource pack zip, ready for `resourcepacks/`
+
+### Play
+
+`play.html?project=cupa` runs the compiled script with the same compiler that
+builds the export, so what you test is what ships.
+
+The state panel is the point. A story routes on conditionals, and many of them
+depend on state you cannot reach by walking the story — affection tiers,
+achievements, time of day. Set a variable and watch the branch change:
+
+```
+affection unset (0)   -> less_than 10 passes  -> "Oh. It's you."
+affection = 11        -> test fails, falls    -> "Master! You came back!"
+```
+
+Quick facts are derived from the script, not hardcoded. Each offers the value
+that makes its test FAIL, because that is the branch you cannot reach normally.
+
+**Day and night are not special.** `isNight` and `isDay` are environment
+properties the engine checks before locals and globals, so a script treats them
+exactly like `affection` or a player's health — an ordinary conditional on an
+ordinary name. The only unusual thing about them is that the world sets them
+instead of the player, which is a story-design fact, not a code path.
+
+## Conditional semantics — read this before writing anything
+
+The engine **continues when the test passes** and **jumps to `end` when it
+fails**:
+
+```json
+{ "type": "conditional", "var": "isNight", "condition": "equal", "value": true, "end": 9 }
+```
+
+```
+isNight == true   ->  carry on to the next block
+isNight != true   ->  jump to id 9
+```
+
+So `end` is the **otherwise** branch, not the "then" branch. Write the passing
+path inline and point the conditional at where to go when it fails. The studio
+labels that field "Otherwise, jump to" for this reason — an earlier label of
+"If true, jump to" inverted every gate that was built with it.
 
 ## Architecture
 

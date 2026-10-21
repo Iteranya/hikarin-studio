@@ -266,7 +266,7 @@ function summarise(block) {
     case 'if': {
       const cond = state.meta?.conditions?.[d.condition] || { label: d.condition };
       const value = cond.needs_value ? ` ${esc(d.value)}` : '';
-      return `<span class="block-sub">${esc(d.scope || 'scene')}·${esc(d.var || '?')} ${esc(cond.label)}${value} →</span> <b>${esc(d._target || '?')}</b>`;
+      return `<span class="block-sub">${esc(d.scope || 'scene')}·${esc(d.var || '?')} ${esc(cond.label)}${value} — otherwise →</span> <b>${esc(d._target || '?')}</b>`;
     }
     case 'next':
       return `<span class="block-sub">remember →</span> <b>${esc(d.target || '?')}</b>`;
@@ -424,13 +424,16 @@ function fieldsFor(block) {
 
     case 'if': {
       all.push({ key: 'scope', label: 'Save as', render: () => selectEl(d, 'scope', state.meta.scopes) });
-      all.push(text('var', 'Variable', 'seen.night_01', 'For player facts: advancement.minecraft:nether, inventory_has.minecraft:end_rod'));
+      all.push(text('var', 'Variable', 'isNight', 'Anything: isNight, affection, seen.night_01, advancement.minecraft:nether'));
       all.push({ key: 'condition', label: 'Test', render: () => conditionPicker(d) });
       const cond = state.meta.conditions[d.condition];
       if (!cond || cond.needs_value) {
         all.push(text('value', 'Value', 'true / 192 / Cupa', 'Numbers and true/false become real values.'));
       }
-      all.push({ key: '_target', label: 'If true, jump to', render: () => labelPicker(d, '_target') });
+      // The engine continues when the test PASSES and jumps when it FAILS, so
+      // this field is the "otherwise" branch. Labelling it "if true" inverts
+      // every writer's first guess.
+      all.push({ key: '_target', label: 'Otherwise, jump to', render: () => labelPicker(d, '_target') });
       break;
     }
 
@@ -854,7 +857,8 @@ function wireChrome() {
   $('btn-new').onclick = newProject;
   $('btn-compile').onclick = validate;
   $('btn-export').onclick = exportPack;
-  $('btn-save')?.addEventListener('click', save);
+  $('btn-play').onclick = play;
+  $('btn-save').onclick = save;
 
   // Ctrl+S saves, Ctrl+Enter validates.
   document.addEventListener('keydown', (e) => {
@@ -951,6 +955,17 @@ async function validate() {
 async function exportPack() {
   if (!state.project) return;
   window.location = `/api/projects/${state.project.slug}/export`;
+}
+
+// The preview saves first: testing unsaved edits would be a lie, and the
+// compiler reads the files on disk.
+async function play() {
+  if (!state.project) return;
+  if (state.dirty) {
+    setStatus('compile', 'saving before preview…');
+    await save();
+  }
+  window.open(`play.html?project=${encodeURIComponent(state.project.slug)}`, '_blank');
 }
 
 boot();

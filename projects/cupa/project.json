@@ -4,7 +4,6 @@
   "packFormat": 15,
   "startLabel": "start",
   "files": [
-    "main.story",
-    "night.story"
+    "main.story"
   ]
 }

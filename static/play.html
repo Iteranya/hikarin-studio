@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hikarin Studio — Preview</title>
+<link rel="stylesheet" href="play.css">
+</head>
+<body>
+
+<header class="playbar">
+  <span class="play-title" id="play-title">Preview</span>
+
+  <div class="play-controls">
+    <label class="toggle">
+      <input type="checkbox" id="env-night">
+      <span>Night</span>
+    </label>
+
+    <button class="btn" id="btn-restart" title="Restart from the start label">↺ Restart</button>
+    <button class="btn" id="btn-vars" title="Variables and facts">⚙ State</button>
+    <label class="toggle">
+      <input type="checkbox" id="env-debug">
+      <span>Debug</span>
+    </label>
+  </div>
+</header>
+
+<div class="play-body">
+
+  <!-- The VN stage. The viewer builds its own DOM inside this element. -->
+  <div class="stage-wrap">
+    <div id="vn-container"></div>
+  </div>
+
+  <!-- State panel: the reason this exists. Flip a flag, watch the story reroute. -->
+  <aside class="state-panel" id="state-panel" hidden>
+    <div class="state-head">
+      <span>Simulated state</span>
+      <button class="btn tiny ghost" id="state-close">✕</button>
+    </div>
+
+    <div class="state-section">
+      <div class="state-label">World</div>
+      <label class="toggle">
+        <input type="checkbox" id="state-night">
+        <span>It is night</span>
+      </label>
+    </div>
+
+    <div class="state-section">
+      <div class="state-label">Variables</div>
+      <div id="var-list" class="var-list"></div>
+      <div class="var-add">
+        <input id="var-name" placeholder="name, e.g. seen.night_01">
+        <input id="var-value" placeholder="value">
+        <button class="btn tiny" id="var-add-btn">Set</button>
+      </div>
+      <div class="state-hint">
+        Setting a variable here does not change the story file — it only changes
+        what this preview thinks is true.
+      </div>
+    </div>
+
+    <div class="state-section">
+      <div class="state-label">Quick facts to try</div>
+      <div class="quick-facts" id="quick-facts"></div>
+    </div>
+  </aside>
+
+  <!-- Compile problems, shown instead of a blank stage. -->
+  <div class="compile-error" id="compile-error" hidden>
+    <h2>This scene will not run</h2>
+    <p class="compile-error-sub">Fix these, then press Restart.</p>
+    <pre id="compile-error-body"></pre>
+  </div>
+
+</div>
+
+<script src="vendor/hikarin-vn-viewer.umd.js"></script>
+<script type="module" src="play.js"></script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 """Hikarin Studio — visual editor for Hikarin visual novel scripts.
 
 Run:
-    uv run main.py
+    uv run serve.py
 
 Then open http://127.0.0.1:8411
 
@@ -11,6 +11,7 @@ A small FastAPI app. No database, no accounts: a project is a folder under
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response
@@ -128,6 +129,100 @@ def compile_project_endpoint(slug: str):
     }
 
 
+@app.get("/api/projects/{slug}/play")
+def play_project(slug: str):
+    """Compiled actions for the in-browser preview.
+
+    Same compiler as export, so what you test is what ships. Errors come back as
+    a 200 with ``ok: false`` rather than a 4xx: a broken story is a normal state
+    while writing, and the preview page renders the problems in place of the
+    stage instead of showing a network error.
+    """
+    try:
+        loaded = project_store.load_project(slug)
+    except project_store.ProjectError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    result = compile_project(loaded["meta"], loaded["files"])
+    return {
+        "ok": result.ok,
+        "errors": result.errors,
+        "warnings": result.warnings,
+        "actions": result.actions,
+        "character": loaded["meta"].get("character", slug),
+        "startLabel": loaded["meta"].get("startLabel", "start"),
+        # Where the viewer should look for sprite and background images.
+        "assetsPath": f"/api/projects/{slug}/assets/",
+        "suggestedVars": _suggested_variables(loaded["files"]),
+    }
+
+
+def _suggested_variables(files: dict[str, list[dict]]) -> list[dict]:
+    """Variables the story reads, so the preview can offer them.
+
+    Derived from the script rather than hardcoded: if the writer invents
+    ``affection.cupa``, the state panel should let them set it without typing.
+
+    The browser viewer has a single variable namespace — it does not implement
+    ``@maid``/``@world``/``@scene``. So the same variable name appearing under
+    different scopes collapses into one entry here, keeping the first non-empty
+    test value. The scope is still reported so the label reads correctly, but it
+    does not change where the value goes.
+    """
+    from hikarin.blocks import CONDITIONS
+
+    found: dict[str, dict] = {}
+    for blocks in files.values():
+        for block in blocks:
+            data = block.get("data") or {}
+            kind = block.get("kind")
+            if kind not in ("if", "setVar"):
+                continue
+            name = data.get("var")
+            if not name:
+                continue
+
+            condition = data.get("condition", "equal")
+            needs_value = CONDITIONS.get(condition, {}).get("needs_value", True)
+
+            if name in found:
+                found[name]["writes"] = found[name]["writes"] or kind == "setVar"
+                # Prefer a test value from an `if`: that is what the story asks.
+                if kind == "if" and needs_value and found[name]["value"] is None:
+                    found[name]["value"] = data.get("value")
+                    found[name]["condition"] = condition
+                continue
+
+            found[name] = {
+                "name": name,
+                "scope": data.get("scope") or "",
+                "value": data.get("value") if (kind == "if" and needs_value) else None,
+                "condition": condition,
+                "writes": kind == "setVar",
+            }
+
+    return sorted(found.values(), key=lambda v: (v["scope"] != "PLAYER", v["name"]))
+
+
+@app.get("/api/projects/{slug}/assets/{path:path}")
+def serve_asset(slug: str, path: str):
+    """Serve a project's own asset files to the preview.
+
+    Path traversal is prevented by resolving and confirming the result stays
+    inside the project's assets folder — a request for ``../../project.json``
+    must not leak the source.
+    """
+    base = (project_store.project_dir(slug) / "assets").resolve()
+    target = (base / path).resolve()
+
+    if base != target and base not in target.parents:
+        raise HTTPException(status_code=403, detail="Path escapes the assets folder")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"No asset named {path}")
+
+    return FileResponse(target)
+
+
 # ── export ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/projects/{slug}/export")
@@ -172,4 +267,9 @@ if STATIC.is_dir():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="127.0.0.1", port=8411, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="127.0.0.1",
+        port=int(os.environ.get("HIKARIN_PORT", "8411")),
+        reload=False,
+    )

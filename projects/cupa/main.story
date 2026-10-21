@@ -8,33 +8,19 @@
   {
     "kind": "if",
     "data": {
-      "scope": "MAID",
-      "var": "seen.night_01",
-      "condition": "equal",
-      "value": "false",
-      "_target": "night_01"
-    }
-  },
-  {
-    "kind": "if",
-    "data": {
-      "scope": "PLAYER",
-      "var": "advancement.minecraft:nether",
-      "condition": "equal",
-      "value": "true",
-      "_target": "nether_chat"
+      "scope": "WORLD",
+      "var": "affection",
+      "condition": "less_than",
+      "value": "10",
+      "_target": "warm_check"
     }
   },
   {
     "kind": "say",
     "data": {
       "label": "Cupa",
-      "content": "Oh! You're back."
+      "content": "Oh. It's you. What do you want."
     }
-  },
-  {
-    "kind": "idle",
-    "data": {}
   },
   {
     "kind": "end",
@@ -43,14 +29,41 @@
   {
     "kind": "label",
     "data": {
-      "name": "nether_chat"
+      "name": "warm_check"
+    }
+  },
+  {
+    "kind": "if",
+    "data": {
+      "scope": "",
+      "var": "isNight",
+      "condition": "equal",
+      "value": "true",
+      "_target": "morning"
     }
   },
   {
     "kind": "say",
     "data": {
       "label": "Cupa",
-      "content": "You went to the Nether without me?"
+      "content": "Can't sleep either? Stay with me a while."
+    }
+  },
+  {
+    "kind": "end",
+    "data": {}
+  },
+  {
+    "kind": "label",
+    "data": {
+      "name": "morning"
+    }
+  },
+  {
+    "kind": "say",
+    "data": {
+      "label": "Cupa",
+      "content": "Good morning, Master. You slept well?"
     }
   },
   {
