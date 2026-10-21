@@ -231,10 +231,15 @@ def _to_action_label(d: dict) -> dict:
 
 
 def _to_action_jump(d: dict) -> dict:
-    action = {"type": "transition", "action": "jump", "label": d.get("target") or ""}
-    if d.get("file"):
-        action["file"] = d["file"]
-    return action
+    """A jump is just a label.
+
+    Tabs are an authoring convenience: every .story file is concatenated into
+    one flat array before compilation, so there is a single global label
+    namespace and a label in any tab is reachable from any other. A "file"
+    field would imply a boundary that does not exist, and it disabled label
+    validation in the compiler, so it is not emitted.
+    """
+    return {"type": "transition", "action": "jump", "label": d.get("target") or ""}
 
 
 def _to_action_next(d: dict) -> dict:
@@ -436,10 +441,7 @@ def block_from_action(action: dict) -> dict | None:
     if kind == "label":
         return {"kind": kind, "data": {"name": action.get("label", "")}}
     if kind == "jump":
-        data = {"target": action.get("label", "")}
-        if action.get("file"):
-            data["file"] = action["file"]
-        return {"kind": kind, "data": data}
+        return {"kind": kind, "data": {"target": action.get("label", "")}}
     if kind == "if":
         data = {
             "scope": action.get("scope"),

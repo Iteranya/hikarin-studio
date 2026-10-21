@@ -132,9 +132,6 @@ def compile_project(
             target = action.get("label")
             if not target:
                 result.errors.append("A Jump block has no target.")
-            elif action.get("file"):
-                # Cross-file jumps resolve in the engine, not here.
-                continue
             elif target not in known:
                 suggestion = suggest(target, list(known))
                 hint = f' Did you mean "{suggestion}"?' if suggestion else ""

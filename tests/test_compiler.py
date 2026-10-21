@@ -335,3 +335,61 @@ def test_box_remove_targets_the_slot_name():
     h = next(a for a in r.actions if a["type"] == "remove_sprite")
     assert h["sprite"] == "old-dsl"
     assert h["action"] == "remove"
+
+
+# ── tabs are just files; one global label namespace ─────────────────────────
+
+
+def test_jump_reaches_a_label_in_another_file():
+    """A tab is a different .story, not a scope. Any label is fair game."""
+    files = {
+        "main.story": [
+            block("label", name="start"),
+            block("jump", target="night_beat"),
+            block("end"),
+            block("label", name="morning"),
+            block("end"),
+        ],
+        "night.story": [
+            block("label", name="night_beat"),
+            block("jump", target="morning"),   # back into main.story
+            block("end"),
+        ],
+    }
+    r = compile_project(PROJECT, files, ["main.story", "night.story"])
+    assert r.errors == [], r.errors
+    assert r.labels["night_beat"] == "night.story"
+    assert r.labels["morning"] == "main.story"
+
+
+def test_jump_to_missing_label_is_still_an_error_across_files():
+    files = {
+        "main.story": [block("label", name="start"), block("jump", target="nowhere"), block("end")],
+        "night.story": [block("label", name="night_beat"), block("end")],
+    }
+    r = compile_project(PROJECT, files, ["main.story", "night.story"])
+    assert any("nowhere" in e for e in r.errors)
+
+
+def test_jump_never_emits_a_file_field():
+    """A file field would imply a boundary that does not exist, and it used to
+    switch off label validation."""
+    files = {"main.story": [
+        block("label", name="start"),
+        block("jump", target="start", file="main.story"),
+        block("end"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    jump = next(a for a in r.actions if a["type"] == "transition")
+    assert "file" not in jump
+    assert jump["label"] == "start"
+
+
+def test_next_checkpoint_crosses_files_too():
+    files = {
+        "main.story": [block("label", name="start"), block("end")],
+        "night.story": [block("next", target="start"), block("end")],
+    }
+    r = compile_project(PROJECT, files, ["main.story", "night.story"])
+    nxt = next(a for a in r.actions if a["type"] == "next")
+    assert nxt["label"] == "start"
