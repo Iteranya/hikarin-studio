@@ -181,3 +181,16 @@ def test_export_filename_is_safe():
     assert export_filename({"packName": "Cupa's Story"}) == "cupa-s-story.zip"
     assert export_filename({"character": "cupa"}) == "cupa.zip"
     assert export_filename({}) == "story.zip"
+
+
+def test_asset_inventory_indexes_plain_image_folders(temp_root):
+    """images/asset/ doubles as the pool for show_custom boxes."""
+    store.create_project("cupa")
+    root = temp_root / "cupa"
+    (root / "images" / "asset" / "old-dsl.png").write_bytes(b"x")
+    (root / "images" / "asset" / "void.png").write_bytes(b"x")
+
+    inventory = store.list_assets(root)
+    assert inventory["folders"]["asset"] == ["old-dsl", "void"]
+    # and still listed as backgrounds, since a Background block uses the same file
+    assert "asset/old-dsl.png" in inventory["backgrounds"]

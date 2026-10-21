@@ -251,8 +251,16 @@ function summarise(block) {
       return `<span class="block-sub">${(d.choices || []).length} option(s):</span> ${esc((d.choices || []).map((c) => c.display).join(' / '))}`;
     case 'idle':
       return '<span class="block-sub">random unlocked line</span>';
-    case 'show':
-      return `<b>${esc(d.sprite || '?')}</b> <span class="block-sub">${esc(d.outfit || 'default')}/${esc(d.expression || 'normal')} · ${esc((d.position || 'center').toLowerCase())}</span>`;
+    case 'show': {
+      if (d.mode === 'box') {
+        const lay = d.layout || {};
+        const size = `${lay.wFrameRatio ?? 10}×${lay.hFrameRatio ?? 6} cells`;
+        return `<span class="block-sub">image box</span> <b>${esc(d.folder || 'asset')}/${esc(d.image || '?')}</b> <span class="block-sub">${size}</span>`;
+      }
+      const lay = d.layout || {};
+      const pos = lay.preset || 'CENTER';
+      return `<b>${esc(d.sprite || '?')}</b> <span class="block-sub">${esc(d.outfit || 'default')}/${esc(d.expression || 'normal')} · ${esc(String(pos).toLowerCase())}</span>`;
+    }
     case 'hide':
       return `<b>${esc(d.sprite || '?')}</b>`;
     case 'background':
@@ -409,30 +417,46 @@ function fieldsFor(block) {
       break;
 
     case 'show': {
-      // Mirrors the SDK's characters.py: textures/<id>/<outfit>/<emotion>.png.
-      // Three levels, always — outfit is not optional even when there is only
-      // one, so adding outfits later never means rewriting every Show block.
-      all.push({ key: 'sprite', label: 'Character', render: () => spritePicker(d) });
+      // Two shapes of the same action, exactly as the SDK splits them:
+      //
+      //   character  show_custom(cupa, "happy", ...)
+      //              characters/<id>/<outfit>/<emotion>.png
+      //
+      //   box        show_custom("asset", "old-dsl", ...)
+      //              <folder>/<file>.png
+      //
+      // The SDK decides by the argument type. Here it is an explicit switch,
+      // because an author should not have to know that trick.
+      const isBox = d.mode === 'box';
 
-      const char = d.sprite || Object.keys(state.project.assets?.characters ?? {})[0];
-      const outfits = Object.keys(state.project.assets?.characters?.[char] ?? {});
-      all.push({
-        key: 'outfit',
-        label: 'Outfit',
-        render: () => (outfits.length
-          ? selectEl(d, 'outfit', outfits.map((o) => ({ value: o, label: o })))
-          : text(null, 'outfit', 'Outfit', 'default', 'No outfits found for this character.')),
-      });
+      all.push({ key: 'mode', label: 'Showing', render: () => modeSwitch(d) });
 
-      const outfit = d.outfit || outfits[0] || 'default';
-      const emotions = state.project.assets?.characters?.[char]?.[outfit] ?? [];
-      all.push({
-        key: 'expression',
-        label: 'Expression',
-        render: () => (emotions.length
-          ? selectEl(d, 'expression', emotions.map((e) => ({ value: e, label: e })))
-          : text(null, 'expression', 'Expression', 'normal', 'No images found in that outfit folder.')),
-      });
+      if (isBox) {
+        all.push({ key: 'folder', label: 'Folder', render: () => folderPicker(d) });
+        all.push({ key: 'image', label: 'Image', render: () => boxImagePicker(d) });
+      } else {
+        all.push({ key: 'sprite', label: 'Character', render: () => spritePicker(d) });
+
+        const char = d.sprite || Object.keys(state.project.assets?.characters ?? {})[0];
+        const outfits = Object.keys(state.project.assets?.characters?.[char] ?? {});
+        all.push({
+          key: 'outfit',
+          label: 'Outfit',
+          render: () => (outfits.length
+            ? selectEl(d, 'outfit', outfits.map((o) => ({ value: o, label: o })))
+            : text(null, 'outfit', 'Outfit', 'default', 'No outfits found for this character.')),
+        });
+
+        const outfit = d.outfit || outfits[0] || 'default';
+        const emotions = state.project.assets?.characters?.[char]?.[outfit] ?? [];
+        all.push({
+          key: 'expression',
+          label: 'Expression',
+          render: () => (emotions.length
+            ? selectEl(d, 'expression', emotions.map((e) => ({ value: e, label: e })))
+            : text(null, 'expression', 'Expression', 'normal', 'No images found in that outfit folder.')),
+        });
+      }
 
       // The grid: this is show_custom. Every show has these six numbers; the
       // named positions are just presets for them.
@@ -939,6 +963,88 @@ function gridEditor(d) {
   wrap.appendChild(readout);
 
   return wrapField('Placement', wrap);
+}
+
+/**
+ * Character sprite or plain image box.
+ *
+ * Same action, same grid, different path. The SDK distinguishes them by
+ * whether the first argument is a Character or a string; making it a visible
+ * switch is kinder than expecting the author to know that.
+ */
+function modeSwitch(d) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;gap:4px';
+
+  for (const [value, label] of [['character', 'Character'], ['box', 'Image box']]) {
+    const btn = document.createElement('button');
+    btn.className = 'btn tiny';
+    btn.textContent = label;
+    btn.style.flex = '1';
+    const active = (d.mode || 'character') === value;
+    if (active) {
+      btn.style.borderColor = 'var(--accent)';
+      btn.style.color = 'var(--accent)';
+    }
+    btn.onclick = () => {
+      d.mode = value;
+      if (value === 'box') {
+        d.folder ??= 'asset';
+        d.image ??= '';
+        // A wide box suits a screenshot or a diagram, not a character.
+        d.layout ??= {};
+        d.layout.wRatio ??= 16;
+        d.layout.hRatio ??= 9;
+        d.layout.wFrameRatio ??= 10;
+        d.layout.hFrameRatio ??= 6;
+        d.layout.column ??= 6;
+        d.layout.row ??= 1;
+        d.layout.preset ??= 'CUSTOM';
+      }
+      commit();
+      renderInspector();
+    };
+    wrap.appendChild(btn);
+  }
+  return wrapField('Showing', wrap);
+}
+
+/** Folders under images/ that hold plain images, e.g. "asset". */
+function folderPicker(d) {
+  const folders = new Set(Object.keys(state.project.assets?.folders ?? {}));
+  // asset/ always exists in a fresh project, so offer it even when empty.
+  folders.add('asset');
+
+  return selectEl(d, 'folder', [...folders].sort().map((f) => ({ value: f, label: f })));
+}
+
+/** Images inside the chosen folder. */
+function boxImagePicker(d) {
+  const folder = d.folder || 'asset';
+  const images = state.project.assets?.folders?.[folder] ?? [];
+
+  if (images.length === 0) {
+    return text(null, 'image', 'Image', 'old-dsl', `No images found in images/${folder}/`);
+  }
+
+  const el = document.createElement('select');
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = '— pick an image —';
+  el.appendChild(blank);
+
+  for (const name of images) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    el.appendChild(option);
+  }
+  el.value = d.image ?? '';
+  el.onchange = () => {
+    d.image = el.value;
+    commit();
+  };
+  return wrapField('Image', el);
 }
 
 function spritePicker(data) {

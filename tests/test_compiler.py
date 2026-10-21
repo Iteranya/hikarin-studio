@@ -277,3 +277,61 @@ def test_day_night_are_not_harvested_as_suggested_vars():
     vars_ = app_module._suggested_variables(files)
     names = [v["name"] for v in vars_]
     assert names == ["affection"], names
+
+
+# ── image boxes: show_custom with a folder instead of a character ───────────
+#
+# The SDK branches on the argument type:
+#
+#   show_custom(cupa, "happy", 16,9,4,8,7,1)      -> characters/<id>/<outfit>/
+#   show_custom("asset","old-dsl",16,9,10,6,6,1)  -> asset/old-dsl.png
+#
+# Both carry the same six grid numbers. Only the path and the slot name differ.
+
+
+def test_image_box_matches_sdk_output():
+    files = {"main.story": [
+        block("label", name="start"),
+        block("show", mode="box", folder="asset", image="old-dsl",
+              layout={"preset": "CUSTOM", "wRatio": 16, "hRatio": 9,
+                      "wFrameRatio": 10, "hFrameRatio": 6, "column": 6, "row": 1}),
+        block("end"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    assert r.errors == [], r.errors
+
+    s = next(a for a in r.actions if a["type"] == "show_sprite")
+    assert s["location"] == "asset/old-dsl.png"
+    assert s["sprite"] == "old-dsl", "a box's slot name is the image name"
+    assert s["position"] == "CUSTOM"
+    assert (s["wRatio"], s["hRatio"]) == (16, 9)
+    assert (s["wFrameRatio"], s["hFrameRatio"]) == (10, 6)
+    assert (s["column"], s["row"]) == (6, 1)
+    assert "dyn_location" not in s, "a box has no outfit to swap"
+
+
+def test_character_show_still_writes_dyn_location():
+    files = {"main.story": [
+        block("label", name="start"),
+        block("show", mode="character", sprite="andr", outfit="default",
+              expression="normal", outfit_var="andr_outfit"),
+        block("end"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    s = next(a for a in r.actions if a["type"] == "show_sprite")
+    assert s["location"] == "characters/andr/default/normal.png"
+    assert s["dyn_location"] == "characters/andr/<andr_outfit>/normal.png"
+    assert s["sprite"] == "andr"
+
+
+def test_box_remove_targets_the_slot_name():
+    """vn.remove("asset","old-dsl") emits sprite: "old-dsl"."""
+    files = {"main.story": [
+        block("label", name="start"),
+        block("hide", sprite="old-dsl"),
+        block("end"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    h = next(a for a in r.actions if a["type"] == "remove_sprite")
+    assert h["sprite"] == "old-dsl"
+    assert h["action"] == "remove"

@@ -144,9 +144,30 @@ def sprite_path(character: str, outfit: str, emotion: str) -> str:
 
 
 def _to_action_show(d: dict) -> dict:
+    # A show is one of two things, and the SDK picks by argument type:
+    #
+    #   show_custom(cupa, "happy", ...)          <- a Character object
+    #       location = characters/<id>/<outfit>/<emotion>.png
+    #       sprite   = <id>                       (dyn_location also written)
+    #
+    #   show_custom("asset", "old-dsl", ...)     <- a plain string
+    #       location = <folder>/<name>.png
+    #       sprite   = <name>                     (no dyn_location)
+    #
+    # Both carry the same six grid numbers and both are position CUSTOM. The
+    # only differences are the path shape and which name becomes the slot, so
+    # this is a mode on one block rather than a separate block type.
+    is_box = d.get("mode") == "box"
+
     sprite = d.get("sprite") or "character"
     expression = d.get("expression") or "normal"
     outfit = d.get("outfit") or "default"
+
+    if is_box:
+        # sprite holds the folder ("asset"), expression holds the file name.
+        folder = d.get("folder") or "asset"
+        name = d.get("image") or expression
+        sprite = name  # the image name IS the slot
 
     # Placement is six numbers describing a rectangle on a wRatio-by-hRatio
     # grid. The original renderer turns them into pixels like this:
@@ -171,20 +192,23 @@ def _to_action_show(d: dict) -> dict:
     preset = layout.get("preset") or d.get("position") or "CENTER"
     position = preset if preset in ("CENTER", "LEFT", "RIGHT") else "CUSTOM"
 
+    location = f"{folder}/{name}.png" if is_box else sprite_path(sprite, outfit, expression)
+
     action = {
         "type": "show_sprite",
         "action": "show",
         "sprite": sprite,
-        "location": sprite_path(sprite, outfit, expression),
+        "location": location,
         "position": position,
         **grid,
     }
 
     # dyn_location lets the outfit be chosen at runtime from a variable, so a
     # character can change clothes mid-story without the script knowing which
-    # folder it will be. The SDK writes this for every sprite.
+    # folder it will be. Only a real character gets one, matching the SDK: a
+    # plain image box has no outfit to swap.
     outfit_var = d.get("outfit_var")
-    if outfit_var:
+    if outfit_var and not is_box:
         action["dyn_location"] = f"characters/{sprite}/<{outfit_var}>/{expression}.png"
 
     return action
@@ -364,23 +388,39 @@ def block_from_action(action: dict) -> dict | None:
     if kind == "show":
         location = action.get("location") or ""
         parts = location.split("/")
+        layout = {
+            "preset": action.get("position", "CENTER"),
+            **{k: action[k] for k in SPRITE_DEFAULTS if k in action},
+        }
+
+        is_character = parts and parts[0] == "characters"
+
+        if not is_character:
+            # A plain image box: <folder>/<file>.png, slot name is the file.
+            folder = parts[0] if len(parts) >= 2 else "asset"
+            filename = parts[-1] if parts else location
+            return {
+                "kind": kind,
+                "data": {
+                    "mode": "box",
+                    "folder": folder,
+                    "image": filename.removesuffix(".png"),
+                    "layout": layout,
+                },
+            }
+
         # characters/<id>/<outfit>/<emotion>.png
-        if len(parts) >= 4 and parts[0] == "characters":
+        if len(parts) >= 4:
             character, outfit, filename = parts[1], parts[2], parts[-1]
-        elif len(parts) >= 2:
-            # Two-level (older studio output): <id>/<emotion>.png
-            character, outfit, filename = parts[0], "default", parts[-1]
         else:
-            character, outfit, filename = "character", "default", location
+            character, outfit, filename = (parts[1] if len(parts) > 1 else "character"), "default", parts[-1]
 
         data = {
+            "mode": "character",
             "sprite": action.get("sprite") or character,
             "outfit": outfit,
             "expression": filename.removesuffix(".png") or "normal",
-            "layout": {
-                "preset": action.get("position", "CENTER"),
-                **{k: action[k] for k in SPRITE_DEFAULTS if k in action},
-            },
+            "layout": layout,
         }
 
         # Recover the variable name from "characters/<id>/<var>/<emotion>.png".

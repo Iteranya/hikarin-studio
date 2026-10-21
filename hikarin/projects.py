@@ -280,6 +280,7 @@ def list_assets(path: Path) -> dict[str, Any]:
         {
           "characters": {"cupa": {"default": ["happy", "normal"]}},
           "backgrounds": ["asset/end.png"],
+          "folders": {"asset": ["end", "void"]},
           "sounds": ["sound/teleport.ogg"],
           "music": ["music/haggstrom.ogg"],
         }
@@ -290,6 +291,7 @@ def list_assets(path: Path) -> dict[str, Any]:
     images = path / "images"
     characters: dict[str, dict[str, set[str]]] = {}
     backgrounds: list[str] = []
+    folders: dict[str, set[str]] = {}
     sounds: list[str] = []
     music: list[str] = []
 
@@ -313,8 +315,13 @@ def list_assets(path: Path) -> dict[str, Any]:
                     filename.rsplit(".", 1)[0]
                 )
             else:
-                # asset/<background>.png and anything else folder-shaped
+                # asset/<background>.png and anything else folder-shaped.
+                # These double as the boxes a show_custom("asset", ...) call
+                # stretches across the screen, so they are indexed by folder as
+                # well as listed flat for the Background block.
                 backgrounds.append(rel)
+                if len(parts) >= 2:
+                    folders.setdefault(parts[0], set()).add(parts[-1].rsplit(".", 1)[0])
 
     sounds_root = path / "sounds"
     if sounds_root.is_dir():
@@ -333,6 +340,8 @@ def list_assets(path: Path) -> dict[str, Any]:
             for char, outfits in sorted(characters.items())
         },
         "backgrounds": sorted(backgrounds),
+        # Plain-image folders, for a show_custom("asset", ...) style box.
+        "folders": {name: sorted(imgs) for name, imgs in sorted(folders.items())},
         "sounds": sorted(sounds),
         "music": sorted(music),
     }
