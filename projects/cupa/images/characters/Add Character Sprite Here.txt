@@ -1,0 +1,16 @@
+These are just example assets
+Feel free to add character sprites
+
+the format is 
+
+name/outfit/images.png
+
+like:
+
+cupa/default/happy.png
+
+The mod as of writing this doesn't have swap outfit feature yet, but just in case and for the sake of future compatibility, add 'default' there, aight?
+
+Changing Resource Pack directory structure will lead to backward incompatibility nightmare
+
+So I rather to have this resource pack to be as flexible as possible for now.

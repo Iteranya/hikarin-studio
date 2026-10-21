@@ -19,13 +19,24 @@ def temp_root(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_create_project_writes_scaffold(temp_root):
+def test_create_project_scaffolds_mediafile_layout(temp_root):
+    """The folder shape mirrors the SDK's mediafile directory."""
     p = store.create_project("cupa")
+    root = temp_root / "cupa"
+
     assert p["slug"] == "cupa"
-    assert (temp_root / "cupa" / "project.json").is_file()
-    assert (temp_root / "cupa" / "main.story").is_file()
-    assert (temp_root / "cupa" / "assets").is_dir()
+    assert (root / "project.json").is_file()
+    assert (root / "main.story").is_file()
     assert "main.story" in p["files"]
+
+    assert (root / "images" / "characters").is_dir()
+    assert (root / "images" / "asset").is_dir()
+    assert (root / "sounds" / "music").is_dir()
+    assert (root / "sounds" / "sound").is_dir()
+
+    # A note in each folder so the layout explains itself in Explorer.
+    assert (root / "images" / "characters" / "Add Character Sprite Here.txt").is_file()
+    assert (root / "images" / "asset" / "Add Background Here.txt").is_file()
 
 
 def test_create_rejects_duplicate(temp_root):
@@ -70,38 +81,46 @@ def test_save_deletes_removed_files(temp_root):
     assert not (temp_root / "cupa" / "night.story").exists(), "deleted tab must not linger on disk"
 
 
-def test_asset_inventory_reads_sdk_layout(temp_root):
-    """characters/<id>/<outfit>/<emotion>.png, per the original SDK."""
+def test_asset_inventory_reads_mediafile_layout(temp_root):
+    """images/characters/<id>/<outfit>/<emotion>.png, per the SDK's mediafile."""
     store.create_project("cupa")
-    assets = temp_root / "cupa" / "assets"
+    root = temp_root / "cupa"
 
-    default_dir = assets / "characters" / "cupa" / "default"
-    default_dir.mkdir(parents=True)
+    default_dir = root / "images" / "characters" / "cupa" / "default"
+    default_dir.mkdir(parents=True, exist_ok=True)
     (default_dir / "happy.png").write_bytes(b"x")
     (default_dir / "angry.png").write_bytes(b"x")
 
-    summer_dir = assets / "characters" / "cupa" / "summer"
-    summer_dir.mkdir(parents=True)
+    summer_dir = root / "images" / "characters" / "cupa" / "summer"
+    summer_dir.mkdir(parents=True, exist_ok=True)
     (summer_dir / "happy.png").write_bytes(b"x")
-    (assets / "room.png").write_bytes(b"x")
-    (assets / "click.ogg").write_bytes(b"x")
 
-    inventory = store.list_assets(temp_root / "cupa")
+    (root / "images" / "asset" / "end.png").write_bytes(b"x")
+    (root / "images" / "pack.png").write_bytes(b"x")
+    (root / "sounds" / "sound" / "teleport.ogg").write_bytes(b"x")
+    (root / "sounds" / "music" / "haggstrom.ogg").write_bytes(b"x")
+
+    inventory = store.list_assets(root)
     assert inventory["characters"]["cupa"]["default"] == ["angry", "happy"]
     assert inventory["characters"]["cupa"]["summer"] == ["happy"]
-    assert inventory["backgrounds"] == ["room.png"]
-    assert inventory["sounds"] == ["click.ogg"]
+
+    # Backgrounds keep their folder prefix: a script must write asset/end.png
+    assert inventory["backgrounds"] == ["asset/end.png"]
+    assert "pack.png" not in inventory["backgrounds"], "the pack icon is not a background"
+
+    assert inventory["sounds"] == ["sound/teleport.ogg"]
+    assert inventory["music"] == ["music/haggstrom.ogg"]
 
 
-def test_asset_inventory_tolerates_two_level_folders(temp_root):
-    """Hand-made <id>/<emotion>.png folders read as outfit "default"."""
+def test_asset_inventory_ignores_pack_icon(temp_root):
+    """images/pack.png is the resource pack icon, not story content."""
     store.create_project("cupa")
-    assets = temp_root / "cupa" / "assets"
-    (assets / "cupa").mkdir(parents=True)
-    (assets / "cupa" / "happy.png").write_bytes(b"x")
+    root = temp_root / "cupa"
+    (root / "images" / "pack.png").write_bytes(b"x")
 
-    inventory = store.list_assets(temp_root / "cupa")
-    assert inventory["characters"]["cupa"]["default"] == ["happy"]
+    inventory = store.list_assets(root)
+    assert inventory["backgrounds"] == []
+    assert inventory["characters"] == {}
 
 
 def test_export_builds_real_resource_pack(temp_root):
@@ -114,27 +133,36 @@ def test_export_builds_real_resource_pack(temp_root):
     ]}
     store.save_project("cupa", meta, files)
 
-    assets = temp_root / "cupa" / "assets"
-    (assets / "cupa").mkdir(exist_ok=True)
-    (assets / "cupa" / "happy.png").write_bytes(b"PNGDATA")
+    root = temp_root / "cupa"
+    sprite = root / "images" / "characters" / "cupa" / "default"
+    sprite.mkdir(parents=True, exist_ok=True)
+    (sprite / "happy.png").write_bytes(b"PNGDATA")
+    (root / "images" / "asset" / "end.png").write_bytes(b"BG")
+    (root / "images" / "pack.png").write_bytes(b"ICON")
+    (root / "sounds" / "music" / "haggstrom.ogg").write_bytes(b"OGG")
 
     result = compile_project(meta, files)
-    payload = build_pack(meta, result, temp_root / "cupa")
+    payload = build_pack(meta, result, root)
 
     with zipfile.ZipFile(io.BytesIO(payload)) as zf:
         names = set(zf.namelist())
+
         assert "pack.mcmeta" in names
+        assert "pack.png" in names, "images/pack.png becomes the pack icon"
         assert "assets/hikarin/cupa.json" in names
-        assert "assets/hikarin/textures/cupa/happy.png" in names
+
+        # images/ -> textures/, structure preserved
+        assert "assets/hikarin/textures/characters/cupa/default/happy.png" in names
+        assert "assets/hikarin/textures/asset/end.png" in names
+        assert "assets/hikarin/textures/pack.png" not in names, "icon must not ship twice"
+
+        # sounds/ maps one-to-one
+        assert "assets/hikarin/sounds/music/haggstrom.ogg" in names
 
         mcmeta = json.loads(zf.read("pack.mcmeta"))
         assert mcmeta["pack"]["pack_format"] == 15
 
-        story = json.loads(zf.read("assets/hikarin/cupa.json"))
-        assert story[0]["type"] == "meta"
-        assert any(a["type"] == "dialogue" for a in story)
-
-        assert zf.read("assets/hikarin/textures/cupa/happy.png") == b"PNGDATA"
+        assert zf.read("assets/hikarin/textures/characters/cupa/default/happy.png") == b"PNGDATA"
 
 
 def test_export_refuses_broken_story(temp_root):

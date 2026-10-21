@@ -61,28 +61,44 @@ def build_pack(
         }
         zf.writestr("pack.mcmeta", json.dumps(mcmeta, indent=2))
 
-        # pack.png — a 128x128 icon; copy the project's if present.
-        icon = project_path / "pack.png"
+        # pack.png — the icon shown in the resource pack list. In the mediafile
+        # layout it lives at images/pack.png.
+        icon = project_path / "images" / "pack.png"
         if icon.is_file():
             zf.write(icon, "pack.png")
 
-        # The story itself.
+        # The story itself. The SDK generated this into scripts/ at compile
+        # time; here it is written fresh on every export, which is why there is
+        # no scripts/ folder to hand-edit.
         zf.writestr(
             f"assets/{CONTENT_NAMESPACE}/{character}.json",
             json.dumps(result.actions, indent=2, ensure_ascii=False),
         )
 
-        # Textures and sounds travel with the story so a pack is self-contained.
-        assets = project_path / "assets"
-        if assets.is_dir():
-            for file in assets.rglob("*"):
-                if not file.is_file():
+        # images/ becomes textures/. That single rename is the whole mapping,
+        # and it is why the authoring folders are named after what they hold
+        # rather than after Minecraft's internal layout.
+        #
+        # Note the pack.png exclusion: it was already written at the zip root,
+        # and copying it again as a texture would ship a stray image.
+        images = project_path / "images"
+        if images.is_dir():
+            for file in images.rglob("*"):
+                if not file.is_file() or file.suffix.lower() not in (".png", ".jpg", ".jpeg"):
                     continue
-                rel = file.relative_to(assets).as_posix()
-                if rel.lower().endswith((".png", ".jpg", ".jpeg")):
-                    zf.write(file, f"assets/{CONTENT_NAMESPACE}/textures/{rel}")
-                elif rel.lower().endswith((".ogg", ".wav", ".mp3")):
-                    zf.write(file, f"assets/{CONTENT_NAMESPACE}/sounds/{rel}")
+                rel = file.relative_to(images).as_posix()
+                if rel == "pack.png":
+                    continue
+                zf.write(file, f"assets/{CONTENT_NAMESPACE}/textures/{rel}")
+
+        # sounds/ maps one-to-one, keeping the music/ and sound/ split.
+        sounds = project_path / "sounds"
+        if sounds.is_dir():
+            for file in sounds.rglob("*"):
+                if not file.is_file() or file.suffix.lower() not in (".ogg", ".wav", ".mp3"):
+                    continue
+                rel = file.relative_to(sounds).as_posix()
+                zf.write(file, f"assets/{CONTENT_NAMESPACE}/sounds/{rel}")
 
     return buffer.getvalue()
 

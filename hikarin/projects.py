@@ -1,17 +1,47 @@
 """Project storage: a folder on disk is a project.
 
-Layout (owned by the studio, living under ``projects/``)::
+The layout deliberately mirrors the original MobTalkerSDK's ``mediafile``
+directory, because that structure is the one that already works and the author
+wrote it down::
 
     projects/cupa/
-        project.json     character, pack name, file order, start label
-        main.story       the spine
+        project.json         character, pack name, file order, start label
+        main.story           the spine
         night.story
         idle.story
-        assets/          sprites, backgrounds, sounds (optional)
+        images/              becomes assets/<ns>/textures/ in the pack
+            pack.png         the resource pack icon
+            characters/
+                cupa/
+                    default/         outfit, always present
+                        happy.png
+                        angry.png
+            asset/           backgrounds
+                end.png
+                void.png
+        sounds/
+            music/           haggstrom.ogg
+            sound/           teleport.ogg
+
+``images/`` maps to ``textures/`` on export; that is the only rename. Sounds map
+one-to-one. Scripts are generated, never hand-edited — the pack's JSON is
+written at export time from the compiled story.
+
+The SDK's own note on sprite layout::
+
+    the format is
+
+    name/outfit/images.png
+
+    like:
+
+    cupa/default/happy.png
+
+    The mod as of writing this doesn't have swap outfit feature yet, but just in
+    case and for the sake of future compatibility, add 'default' there, aight?
 
 ``.story`` files are JSON arrays of editor blocks, without ids. The compiler
-assigns ids. Keeping the source id-free means reordering blocks in the editor
-never produces a merge conflict over numbering.
+assigns ids, so reordering blocks never causes a numbering conflict.
 """
 
 from __future__ import annotations
@@ -171,7 +201,44 @@ def create_project(slug: str, meta: dict[str, Any] | None = None) -> dict[str, A
     if path.exists() and any(path.iterdir()):
         raise ProjectError(f"Project '{slug}' already exists")
     path.mkdir(parents=True, exist_ok=True)
-    (path / "assets").mkdir(exist_ok=True)
+
+    # Scaffold the mediafile layout so the folders are obvious the first time
+    # the author opens the project in Explorer.
+    (path / "images" / "characters").mkdir(parents=True, exist_ok=True)
+    (path / "images" / "asset").mkdir(parents=True, exist_ok=True)
+    (path / "sounds" / "music").mkdir(parents=True, exist_ok=True)
+    (path / "sounds" / "sound").mkdir(parents=True, exist_ok=True)
+    (path / "images" / "characters" / "Add Character Sprite Here.txt").write_text(
+        "Character sprites go in folders here.\n\n"
+        "The format is name/outfit/image.png\n\n"
+        "like:\n\n"
+        "    cupa/default/happy.png\n\n"
+        "Always include the outfit folder. The mod does not swap outfits yet, but\n"
+        "the level exists so scripts never need rewriting when it does.\n\n"
+        "Names must be lowercase with no spaces or punctuation: they become\n"
+        "texture paths.\n",
+        encoding="utf-8",
+    )
+    (path / "images" / "asset" / "Add Background Here.txt").write_text(
+        "Backgrounds go here, flat.\n\n"
+        "Like:\n\n"
+        "    end.png\n\n"
+        "In a script, reference them as:\n\n"
+        "    asset/end.png\n",
+        encoding="utf-8",
+    )
+    (path / "sounds" / "sound" / "Add Sound Here.txt").write_text(
+        "Sound effects go here, as .ogg files.\n\n"
+        "In a script, a sound named click.ogg is referenced as:\n\n"
+        "    click\n",
+        encoding="utf-8",
+    )
+    (path / "sounds" / "music" / "Add Music Here.txt").write_text(
+        "Music tracks go here, as .ogg files.\n\n"
+        "In a script, a track named haggstrom.ogg is referenced as:\n\n"
+        "    haggstrom\n",
+        encoding="utf-8",
+    )
 
     merged = dict(DEFAULT_PROJECT)
     if meta:
@@ -199,59 +266,66 @@ def compile_slug(slug: str) -> CompileResult:
 # ── assets ──────────────────────────────────────────────────────────────────
 
 def list_assets(path: Path) -> dict[str, Any]:
-    """Inventory the project's assets folder, grouped for the editor.
+    """Inventory the project's media folders, grouped for the editor.
 
-    Sprite layout mirrors the original SDK exactly:
+    Reads the ``mediafile`` layout the SDK ships:
 
-        characters/<character id>/<outfit>/<emotion>.png
+        images/characters/<id>/<outfit>/<emotion>.png   sprites
+        images/asset/<background>.png                   backgrounds
+        sounds/music/<track>.ogg                        music
+        sounds/sound/<sfx>.ogg                          sound effects
 
-    so the Show block can offer a character, then that character's outfits, then
-    the emotions inside the chosen outfit — instead of asking the writer to
-    remember folder names.
-
-    A flat image is a background. Anything else with an image extension and at
-    least two path segments is treated as a sprite, with a missing outfit level
-    read as "default" so hand-made two-level folders still work.
-
-    Returns::
+    Returns the shape the editor's dropdowns want::
 
         {
-          "characters": { "<id>": { "<outfit>": ["<emotion>", ...] } },
-          "backgrounds": [...],
-          "sounds": [...],
+          "characters": {"cupa": {"default": ["happy", "normal"]}},
+          "backgrounds": ["asset/end.png"],
+          "sounds": ["sound/teleport.ogg"],
+          "music": ["music/haggstrom.ogg"],
         }
+
+    Backgrounds are reported with their folder prefix because that is how a
+    script must reference them: ``asset/end.png``, not ``end.png``.
     """
-    root = path / "assets"
+    images = path / "images"
     characters: dict[str, dict[str, set[str]]] = {}
     backgrounds: list[str] = []
     sounds: list[str] = []
+    music: list[str] = []
 
-    if not root.is_dir():
-        return {"characters": {}, "backgrounds": [], "sounds": []}
-
-    for file in root.rglob("*"):
-        if not file.is_file():
-            continue
-        rel = file.relative_to(root).as_posix()
-        lower = rel.lower()
-
-        if lower.endswith((".ogg", ".wav", ".mp3")):
-            sounds.append(rel)
-        elif lower.endswith((".png", ".jpg", ".jpeg")):
+    if images.is_dir():
+        for file in images.rglob("*"):
+            if not file.is_file() or file.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+                continue
+            rel = file.relative_to(images).as_posix()
             parts = rel.split("/")
+
             if len(parts) == 1:
-                backgrounds.append(rel)
+                # images/pack.png is the pack icon, not a background.
+                if parts[0] != "pack.png":
+                    backgrounds.append(rel)
                 continue
 
-            # Drop the leading "characters/" so both layouts read the same:
-            #   characters/<id>/<outfit>/<emotion>.png   (SDK)
-            #   <id>/<outfit>/<emotion>.png              (bare)
-            sprite_parts = parts[1:] if parts[0] == "characters" else parts
+            if parts[0] == "characters" and len(parts) >= 4:
+                # characters/<id>/<outfit>/<emotion>.png
+                _, character, outfit, filename = parts[0], parts[1], parts[2], parts[-1]
+                characters.setdefault(character, {}).setdefault(outfit, set()).add(
+                    filename.rsplit(".", 1)[0]
+                )
+            else:
+                # asset/<background>.png and anything else folder-shaped
+                backgrounds.append(rel)
 
-            emotion = sprite_parts[-1].rsplit(".", 1)[0]
-            character = sprite_parts[0]
-            outfit = sprite_parts[-2] if len(sprite_parts) >= 3 else "default"
-            characters.setdefault(character, {}).setdefault(outfit, set()).add(emotion)
+    sounds_root = path / "sounds"
+    if sounds_root.is_dir():
+        for file in sounds_root.rglob("*"):
+            if not file.is_file() or file.suffix.lower() not in (".ogg", ".wav", ".mp3"):
+                continue
+            rel = file.relative_to(sounds_root).as_posix()
+            if rel.startswith("music/"):
+                music.append(rel)
+            else:
+                sounds.append(rel)
 
     return {
         "characters": {
@@ -260,4 +334,5 @@ def list_assets(path: Path) -> dict[str, Any]:
         },
         "backgrounds": sorted(backgrounds),
         "sounds": sorted(sounds),
+        "music": sorted(music),
     }

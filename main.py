@@ -225,17 +225,24 @@ def _suggested_variables(files: dict[str, list[dict]]) -> list[dict]:
 
 @app.get("/api/projects/{slug}/assets/{path:path}")
 def serve_asset(slug: str, path: str):
-    """Serve a project's own asset files to the preview.
+    """Serve a project's media files to the in-browser preview.
 
-    Path traversal is prevented by resolving and confirming the result stays
-    inside the project's assets folder — a request for ``../../project.json``
-    must not leak the source.
+    The editor's asset folders are named after what they hold (``images/``,
+    ``sounds/``), not after Minecraft's internal layout. The preview asks for
+    ``textures/<...>`` because that is what the engine's location strings say,
+    so the two get mapped here: ``textures/x`` -> ``images/x``.
     """
-    base = (project_store.project_dir(slug) / "assets").resolve()
-    target = (base / path).resolve()
+    base = project_store.project_dir(slug).resolve()
+
+    if path.startswith("textures/"):
+        target = (base / "images" / path[len("textures/"):]).resolve()
+    elif path.startswith("sounds/"):
+        target = (base / "sounds" / path[len("sounds/"):]).resolve()
+    else:
+        target = (base / "images" / path).resolve()
 
     if base != target and base not in target.parents:
-        raise HTTPException(status_code=403, detail="Path escapes the assets folder")
+        raise HTTPException(status_code=403, detail="Path escapes the project folder")
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"No asset named {path}")
 

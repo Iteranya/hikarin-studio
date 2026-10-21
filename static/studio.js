@@ -424,7 +424,7 @@ function fieldsFor(block) {
       break;
 
     case 'background':
-      all.push(text('background', 'Image', 'room.png', 'Under assets/. Leave empty to keep the world.'));
+      all.push({ key: 'background', label: 'Image', render: () => backgroundPicker(d) });
       break;
 
     case 'label':
@@ -507,11 +507,11 @@ function fieldsFor(block) {
       break;
 
     case 'music':
-      all.push(text('music', 'Track (empty = stop)', 'haggstrom'));
+      all.push({ key: 'music', label: 'Track', render: () => audioPicker(d, 'music', 'music/', '— stop music —') });
       break;
 
     case 'sound':
-      all.push(text('sound', 'Sound', 'teleport'));
+      all.push({ key: 'sound', label: 'Sound', render: () => audioPicker(d, 'sound', 'sound/', '— none —') });
       break;
 
     case 'idle':
@@ -663,6 +663,80 @@ function outfitVarField(d) {
     el,
     'When set, the engine builds characters/<id>/<variable>/<emotion>.png and uses it if the variable is defined.'
   );
+}
+
+/**
+ * Backgrounds live in images/asset/ and are referenced with that prefix:
+ * "asset/end.png". Offering the real files beats making the author remember
+ * the folder name.
+ */
+function backgroundPicker(d) {
+  const options = state.project.assets?.backgrounds ?? [];
+  if (options.length === 0) {
+    return text(null, 'background', 'Image', 'asset/end.png', 'No backgrounds found in images/asset/. Free text for now.');
+  }
+
+  const el = document.createElement('select');
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = '— keep the world —';
+  el.appendChild(blank);
+
+  for (const bg of options) {
+    const option = document.createElement('option');
+    option.value = bg;
+    option.textContent = bg;
+    el.appendChild(option);
+  }
+  el.value = d.background ?? '';
+  el.onchange = () => {
+    d.background = el.value;
+    commit();
+  };
+  return wrapField('Image', el);
+}
+
+/**
+ * Pick a track or sound effect from the project's sounds/ folder.
+ *
+ * The engine wants the bare name — "haggstrom" — not the path, because it
+ * resolves against its own sound event table. Stripping the folder and the
+ * extension here means the block summary reads the way a script does.
+ */
+function audioPicker(d, key, prefix, emptyLabel) {
+  const source = key === 'music'
+    ? (state.project.assets?.music ?? [])
+    : (state.project.assets?.sounds ?? []);
+
+  const names = source
+    .filter((p) => p.startsWith(prefix))
+    .map((p) => p.slice(prefix.length).replace(/\.(ogg|wav|mp3)$/i, ''));
+
+  if (names.length === 0) {
+    return text(null, key, key === 'music' ? 'Track (empty = stop)' : 'Sound',
+      key === 'music' ? 'haggstrom' : 'teleport',
+      `No files found in sounds/${prefix}`);
+  }
+
+  const el = document.createElement('select');
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = emptyLabel;
+  el.appendChild(blank);
+
+  for (const name of names) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    el.appendChild(option);
+  }
+  el.value = d[key] ?? '';
+  el.onchange = () => {
+    if (el.value) d[key] = el.value;
+    else delete d[key];
+    commit();
+  };
+  return wrapField(key === 'music' ? 'Track' : 'Sound', el);
 }
 
 function spritePicker(data) {
