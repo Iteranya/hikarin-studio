@@ -408,16 +408,37 @@ function fieldsFor(block) {
       all.push({ key: 'choices', label: 'Options', render: () => choiceEditor(d) });
       break;
 
-    case 'show':
+    case 'show': {
       // Mirrors the SDK's characters.py: textures/<id>/<outfit>/<emotion>.png.
       // Three levels, always — outfit is not optional even when there is only
       // one, so adding outfits later never means rewriting every Show block.
       all.push({ key: 'sprite', label: 'Character', render: () => spritePicker(d) });
-      all.push(text('outfit', 'Outfit', 'default', 'Folder under the character. Use "default" unless you have variants.'));
-      all.push(text('expression', 'Expression', 'normal', 'File name without .png'));
-      all.push({ key: 'outfit_var', label: 'Outfit from variable (optional)', render: () => outfitVarField(d) });
-      all.push({ key: 'position', label: 'Position', render: () => selectEl(d, 'position', state.meta.positions) });
+
+      const char = d.sprite || Object.keys(state.project.assets?.characters ?? {})[0];
+      const outfits = Object.keys(state.project.assets?.characters?.[char] ?? {});
+      all.push({
+        key: 'outfit',
+        label: 'Outfit',
+        render: () => (outfits.length
+          ? selectEl(d, 'outfit', outfits.map((o) => ({ value: o, label: o })))
+          : text(null, 'outfit', 'Outfit', 'default', 'No outfits found for this character.')),
+      });
+
+      const outfit = d.outfit || outfits[0] || 'default';
+      const emotions = state.project.assets?.characters?.[char]?.[outfit] ?? [];
+      all.push({
+        key: 'expression',
+        label: 'Expression',
+        render: () => (emotions.length
+          ? selectEl(d, 'expression', emotions.map((e) => ({ value: e, label: e })))
+          : text(null, 'expression', 'Expression', 'normal', 'No images found in that outfit folder.')),
+      });
+
+      // The grid: this is show_custom. Every show has these six numbers; the
+      // named positions are just presets for them.
+      all.push({ key: 'layout', label: 'Placement', render: () => gridEditor(d) });
       break;
+    }
 
     case 'hide':
       all.push(text('sprite', 'Character', 'cupa'));
@@ -737,6 +758,187 @@ function audioPicker(d, key, prefix, emptyLabel) {
     commit();
   };
   return wrapField(key === 'music' ? 'Track' : 'Sound', el);
+}
+
+/**
+ * Visual editor for the grid placement system.
+ *
+ * The original renderer, from ForegroundComponent, is a grid:
+ *
+ *     int wBlocks = (int) (width / wRatio);              // cell width
+ *     int hBlocks = (int) (height / hRatio);             // cell height
+ *     int wThing  = (int) (wBlocks * frameWRatio);       // sprite width
+ *     int hThing  = (int) (hBlocks * frameHRatio);       // sprite height
+ *     int x = (int) (wBlocks * (startColumn - 1));       // 1-based!
+ *     int y = (int) (hBlocks * (startRow - 1));
+ *
+ * So six numbers describe a rectangular patch of a wRatio-by-hRatio grid, and
+ * the sprite is stretched to fill it. That is the whole layout engine.
+ *
+ * The editor shows the grid, lets you drag the frame, and reports the numbers
+ * that the script would otherwise need to be computed by hand.
+ */
+const GRID_DEFAULTS = { wRatio: 16, hRatio: 9, wFrameRatio: 4, hFrameRatio: 8, column: 7, row: 1 };
+
+const POSITION_PRESETS = {
+  CENTER: { wFrameRatio: 4, hFrameRatio: 8, column: 7, row: 1 },
+  LEFT:   { wFrameRatio: 4, hFrameRatio: 8, column: 1, row: 1 },
+  RIGHT:  { wFrameRatio: 4, hFrameRatio: 8, column: 13, row: 1 },
+};
+
+function gridEditor(d) {
+  const wrap = document.createElement('div');
+
+  // A show with no explicit numbers uses the engine's defaults.
+  d.layout ??= { ...GRID_DEFAULTS, preset: 'CENTER' };
+
+  const layout = d.layout;
+
+  // ── preset row ──
+  const presets = document.createElement('div');
+  presets.style.cssText = 'display:flex;gap:4px;margin-bottom:8px';
+
+  for (const [name, values] of Object.entries(POSITION_PRESETS)) {
+    const btn = document.createElement('button');
+    btn.className = 'btn tiny';
+    btn.textContent = name.toLowerCase();
+    btn.style.flex = '1';
+    btn.onclick = () => {
+      Object.assign(layout, values);
+      layout.preset = name;
+      commit();
+      renderInspector();
+    };
+    presets.appendChild(btn);
+  }
+
+  const customBtn = document.createElement('button');
+  customBtn.className = 'btn tiny';
+  customBtn.textContent = 'custom';
+  customBtn.style.flex = '1';
+  customBtn.onclick = () => {
+    layout.preset = 'CUSTOM';
+    commit();
+    renderInspector();
+  };
+  presets.appendChild(customBtn);
+  wrap.appendChild(presets);
+
+  // ── the grid ──
+  const canvas = document.createElement('div');
+  canvas.style.cssText =
+    'position:relative;width:100%;aspect-ratio:16/9;background:#0d0f12;' +
+    'border:1px solid var(--line);border-radius:4px;overflow:hidden;cursor:crosshair';
+
+  // grid lines
+  const cols = Math.max(1, Number(layout.wRatio) || 16);
+  const rows = Math.max(1, Number(layout.hRatio) || 9);
+  canvas.style.backgroundImage =
+    `linear-gradient(to right, #1e232a 1px, transparent 1px),` +
+    `linear-gradient(to bottom, #1e232a 1px, transparent 1px)`;
+  canvas.style.backgroundSize = `${100 / cols}% ${100 / rows}%`;
+
+  // the frame
+  const frame = document.createElement('div');
+  frame.style.cssText =
+    'position:absolute;border:2px solid var(--accent);background:rgba(111,168,220,.18);' +
+    'box-sizing:border-box;pointer-events:none';
+
+  const applyFrame = () => {
+    const col = Math.max(1, Math.min(cols, Number(layout.column) || 1));
+    const row = Math.max(1, Math.min(rows, Number(layout.row) || 1));
+    const w = Math.max(1, Number(layout.wFrameRatio) || 4);
+    const h = Math.max(1, Number(layout.hFrameRatio) || 8);
+
+    frame.style.left = `${((col - 1) / cols) * 100}%`;
+    frame.style.top = `${((row - 1) / rows) * 100}%`;
+    frame.style.width = `${(w / cols) * 100}%`;
+    frame.style.height = `${(h / rows) * 100}%`;
+
+    // A frame hanging off the edge is the single most common layout mistake:
+    // it renders partially or not at all, with no error.
+    const overflowX = col - 1 + w > cols;
+    const overflowY = row - 1 + h > rows;
+    frame.style.borderColor = overflowX || overflowY ? 'var(--error)' : 'var(--accent)';
+    frame.style.background = overflowX || overflowY
+      ? 'rgba(217,92,92,.18)'
+      : 'rgba(111,168,220,.18)';
+  };
+
+  applyFrame();
+  canvas.appendChild(frame);
+
+  // click to move the frame
+  canvas.onclick = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const fx = (event.clientX - rect.left) / rect.width;
+    const fy = (event.clientY - rect.top) / rect.height;
+    layout.column = Math.max(1, Math.min(cols, Math.floor(fx * cols) + 1));
+    layout.row = Math.max(1, Math.min(rows, Math.floor(fy * rows) + 1));
+    layout.preset = 'CUSTOM';
+    commit();
+    renderInspector();
+  };
+
+  wrap.appendChild(canvas);
+
+  // ── the six numbers ──
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px';
+
+  const numeric = (key, label, min, max) => {
+    const cell = document.createElement('div');
+    const lab = document.createElement('div');
+    lab.className = 'field-label';
+    lab.textContent = label;
+    const el = document.createElement('input');
+    el.type = 'number';
+    el.min = min;
+    el.max = max ?? '';
+    el.value = layout[key] ?? GRID_DEFAULTS[key];
+    el.style.cssText = 'width:100%;padding:4px 6px;background:var(--bg);color:var(--text);' +
+      'border:1px solid var(--line);border-radius:4px;font:inherit;font-size:12px';
+    el.oninput = () => {
+      layout[key] = Number(el.value);
+      layout.preset = 'CUSTOM';
+      applyFrame();
+      commit();
+    };
+    cell.append(lab, el);
+    return cell;
+  };
+
+  grid.append(
+    numeric('wRatio', 'Screen columns', 1),
+    numeric('hRatio', 'Screen rows', 1),
+    numeric('wFrameRatio', 'Sprite cells wide', 1),
+    numeric('hFrameRatio', 'Sprite cells tall', 1),
+    numeric('column', 'Start column (1 = left)', 1),
+    numeric('row', 'Start row (1 = top)', 1),
+  );
+  wrap.appendChild(grid);
+
+  // ── readout ──
+  const readout = document.createElement('div');
+  readout.className = 'field-hint';
+  readout.style.marginTop = '6px';
+
+  const col = Number(layout.column) || 1;
+  const row = Number(layout.row) || 1;
+  const w = Number(layout.wFrameRatio) || 4;
+  const h = Number(layout.hFrameRatio) || 8;
+  const offX = col - 1 + w > cols;
+  const offY = row - 1 + h > rows;
+
+  const spansX = ((w / cols) * 100).toFixed(0);
+  const spansY = ((h / rows) * 100).toFixed(0);
+
+  readout.innerHTML = `Occupies ${spansX}% × ${spansY}% of the screen, ` +
+    `from cell ${col},${row}` +
+    (offX || offY ? ' — <b style="color:var(--error)">hangs off the edge</b>' : '');
+  wrap.appendChild(readout);
+
+  return wrapField('Placement', wrap);
 }
 
 function spritePicker(data) {

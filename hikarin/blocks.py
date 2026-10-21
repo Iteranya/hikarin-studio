@@ -147,10 +147,29 @@ def _to_action_show(d: dict) -> dict:
     sprite = d.get("sprite") or "character"
     expression = d.get("expression") or "normal"
     outfit = d.get("outfit") or "default"
-    position = d.get("position") or "CENTER"
+
+    # Placement is six numbers describing a rectangle on a wRatio-by-hRatio
+    # grid. The original renderer turns them into pixels like this:
+    #
+    #   cell_w = width / wRatio
+    #   cell_h = height / hRatio
+    #   x      = cell_w * (column - 1)      <- 1-based, not an array index
+    #   y      = cell_h * (row - 1)
+    #   size   = (cell_w * wFrameRatio, cell_h * hFrameRatio)
+    #
+    # The named positions are only presets for those numbers; every show ships
+    # all six so the engine never has to guess.
+    layout = d.get("layout") if isinstance(d.get("layout"), dict) else {}
     grid = dict(SPRITE_DEFAULTS)
-    if position == "CUSTOM" and isinstance(d.get("custom"), dict):
-        grid.update({k: d["custom"][k] for k in SPRITE_DEFAULTS if k in d["custom"]})
+    for key in SPRITE_DEFAULTS:
+        value = layout.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            grid[key] = int(value)
+
+    # The engine reads `position` only to decide whether to apply the numbers at
+    # all; a preset name is cosmetic, and a hand-tuned grid is CUSTOM.
+    preset = layout.get("preset") or d.get("position") or "CENTER"
+    position = preset if preset in ("CENTER", "LEFT", "RIGHT") else "CUSTOM"
 
     action = {
         "type": "show_sprite",
@@ -358,8 +377,10 @@ def block_from_action(action: dict) -> dict | None:
             "sprite": action.get("sprite") or character,
             "outfit": outfit,
             "expression": filename.removesuffix(".png") or "normal",
-            "position": action.get("position", "CENTER"),
-            "custom": {k: action.get(k) for k in SPRITE_DEFAULTS},
+            "layout": {
+                "preset": action.get("position", "CENTER"),
+                **{k: action[k] for k in SPRITE_DEFAULTS if k in action},
+            },
         }
 
         # Recover the variable name from "characters/<id>/<var>/<emotion>.png".
