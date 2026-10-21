@@ -1,0 +1,11 @@
+{
+  "name": "hikarin-studio",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Visual editor for Hikarin visual novel scripts",
+  "scripts": {
+    "test": "node --test test/",
+    "dev": "npx --yes serve . -l 5173"
+  },
+  "license": "AGPL-3.0"
+}
