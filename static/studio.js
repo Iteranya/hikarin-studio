@@ -455,7 +455,26 @@ function fieldsFor(block) {
     }
 
     case 'next':
-      all.push({ key: 'target', label: 'Resume at', render: () => labelPicker(d, 'target') });
+      all.push({ key: 'target', label: 'Next beat', render: () => labelPicker(d, 'target') });
+      all.push({
+        key: '_hint',
+        label: '',
+        render: () => {
+          // This is the progression clock, so explain the two rules that make
+          // it work. A writer who puts `next` on a refusal path, or forgets it
+          // on a success path, gets a story that stalls or repeats forever.
+          const el = document.createElement('div');
+          el.className = 'field-hint';
+          el.style.cssText = 'margin:-4px 0 12px;line-height:1.5';
+          el.innerHTML =
+            'Moves the story\'s <b>cursor</b> to this label and saves it with the maid. ' +
+            'The next time she is talked to, the scene resumes there.<br><br>' +
+            '<b>Put this only on paths that succeeded.</b> A refusal path (wrong time of day, ' +
+            'not enough affection) must end without touching the cursor, so it can wait ' +
+            'patiently and try again later.';
+          return el;
+        },
+      });
       break;
 
     case 'setVar':
