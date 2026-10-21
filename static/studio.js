@@ -396,12 +396,23 @@ function renderInspector() {
   body.appendChild(actions);
 }
 
+/**
+ * A plain text field descriptor.
+ *
+ * Lives at module scope because the field renderers that fall back to raw text
+ * (a picker with no matching files, for instance) call it from outside
+ * fieldsFor. When it was a const inside fieldsFor, those callers threw
+ * "text is not defined" and the inspector showed the error instead of a field.
+ */
+function textField(key, label, placeholder = '', hint = '') {
+  return { key, label, render: () => input(null, key, label, placeholder, hint) };
+}
+
 function fieldsFor(block) {
   const d = block.data;
   const all = [];
 
-  const text = (key, label, placeholder = '', hint = '') =>
-    ({ key, label, render: () => input(text, key, label, placeholder, hint) });
+  const text = textField;
   const area = (key, label, rows = 3) =>
     ({ key, label, render: () => textarea(key, label, rows) });
 
@@ -718,7 +729,7 @@ function outfitVarField(d) {
 function backgroundPicker(d) {
   const options = state.project.assets?.backgrounds ?? [];
   if (options.length === 0) {
-    return text(null, 'background', 'Image', 'asset/end.png', 'No backgrounds found in images/asset/. Free text for now.');
+    return textField(null, 'background', 'Image', 'asset/end.png', 'No backgrounds found in images/asset/. Free text for now.');
   }
 
   const el = document.createElement('select');
@@ -758,7 +769,7 @@ function audioPicker(d, key, prefix, emptyLabel) {
     .map((p) => p.slice(prefix.length).replace(/\.(ogg|wav|mp3)$/i, ''));
 
   if (names.length === 0) {
-    return text(null, key, key === 'music' ? 'Track (empty = stop)' : 'Sound',
+    return textField(null, key, key === 'music' ? 'Track (empty = stop)' : 'Sound',
       key === 'music' ? 'haggstrom' : 'teleport',
       `No files found in sounds/${prefix}`);
   }
@@ -1009,13 +1020,23 @@ function modeSwitch(d) {
   return wrapField('Showing', wrap);
 }
 
-/** Folders under images/ that hold plain images, e.g. "asset". */
+/**
+ * Folders under images/ that hold plain images.
+ *
+ * A box is show_custom(<folder>, <image>, ...), so the folder name is whatever
+ * the author created — "asset" is only the one the original demo used. This
+ * lists all of them, so dropping images/ui/ into the project makes "ui"
+ * selectable without touching code.
+ */
 function folderPicker(d) {
-  const folders = new Set(Object.keys(state.project.assets?.folders ?? {}));
-  // asset/ always exists in a fresh project, so offer it even when empty.
-  folders.add('asset');
+  const folders = Object.keys(state.project.assets?.folders ?? {}).sort();
 
-  return selectEl(d, 'folder', [...folders].sort().map((f) => ({ value: f, label: f })));
+  if (folders.length === 0) {
+    return textField(null, 'folder', 'Folder', 'asset',
+      'No image folders yet. Create images/<name>/ and drop images in it.');
+  }
+
+  return selectEl(d, 'folder', folders.map((f) => ({ value: f, label: f })));
 }
 
 /** Images inside the chosen folder. */
@@ -1024,7 +1045,7 @@ function boxImagePicker(d) {
   const images = state.project.assets?.folders?.[folder] ?? [];
 
   if (images.length === 0) {
-    return text(null, 'image', 'Image', 'old-dsl', `No images found in images/${folder}/`);
+    return textField(null, 'image', 'Image', 'old-dsl', `No images found in images/${folder}/`);
   }
 
   const el = document.createElement('select');

@@ -340,7 +340,10 @@ def list_assets(path: Path) -> dict[str, Any]:
             for char, outfits in sorted(characters.items())
         },
         "backgrounds": sorted(backgrounds),
-        # Plain-image folders, for a show_custom("asset", ...) style box.
+        # Every folder under images/ that is not the characters tree. A box is
+        # show_custom(<folder>, <image>, ...), so any folder can hold them —
+        # "asset" is only the name the demo happened to use. Listing all of them
+        # means adding images/ui/ makes "ui" selectable with no code change.
         "folders": {name: sorted(imgs) for name, imgs in sorted(folders.items())},
         "sounds": sorted(sounds),
         "music": sorted(music),
