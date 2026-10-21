@@ -101,6 +101,80 @@ overwrite each other by accident.
 `advancement.<id>` — e.g. `advancement.minecraft:nether`
 `inventory_has.<item>` — e.g. `inventory_has.minecraft:end_rod`
 
+## Sprites
+
+Copied from the original SDK's `characters.py`, which states it directly:
+
+```
+# In minecraft, character sprite will be located in
+# textures/character.id/character.outfit/emotion.png
+
+# show(cupa, "happy")  ->  textures/cupa/default/happy.png
+```
+
+**Three levels, always: `<character>/<outfit>/<emotion>.png`.**
+
+```json
+{
+  "type": "show_sprite",
+  "action": "show",
+  "sprite": "cupa",
+  "location": "characters/cupa/default/happy.png",
+  "dyn_location": "characters/cupa/<cupa_outfit>/happy.png",
+  "position": "CENTER",
+  "wRatio": 16, "hRatio": 9, "wFrameRatio": 4, "hFrameRatio": 8,
+  "column": 7, "row": 1
+}
+```
+
+`sprite` is the **slot name**, not a path: two shows with the same `sprite`
+replace each other rather than stacking.
+
+### On disk
+
+```
+assets/hikarin/textures/
+   characters/
+      cupa/
+         default/
+            normal.png        <- show(cupa, "normal")
+            happy.png         <- show(cupa, "happy")
+         summer/
+            happy.png         <- outfit swap
+      andr/
+         default/
+            normal.png
+   room.png                    <- backgrounds sit flat
+```
+
+### `dyn_location` — outfit chosen at runtime
+
+The SDK writes a second path with the outfit as a `<variable>` placeholder:
+
+```
+location      characters/cupa/default/happy.png    <- fallback
+dyn_location  characters/cupa/<cupa_outfit>/happy.png
+```
+
+At show time the engine substitutes `<cupa_outfit>` from scene or world state.
+If the variable is undefined, or the result is incomplete, it falls back to
+`location` and logs a warning. That is how a character changes clothes mid-story
+without the script branching its own Show blocks.
+
+### Name rules
+
+Sprite, outfit and emotion names are validated the way the SDK validates them:
+
+```python
+if re.search(r"[A-Z\s.,!?#@$*]", sprite):
+    raise ValueError("Sprite name cannot contain special characters, "
+                     "white space, or uppercase letters.")
+```
+
+Minecraft texture paths are lowercase-only. A capital or a space does not fail
+loudly — it silently renders nothing, which reads as "the artist forgot a
+file". The compiler rejects it instead.
+
 ## Conditions
 
 `equal`, `not_equal`, `less_than`, `greater_than`, `less_or_equal`,

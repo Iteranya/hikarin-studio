@@ -198,16 +198,31 @@ def compile_slug(slug: str) -> CompileResult:
 
 # ── assets ──────────────────────────────────────────────────────────────────
 
-def list_assets(path: Path) -> dict[str, list[str]]:
+def list_assets(path: Path) -> dict[str, Any]:
     """Inventory the project's assets folder, grouped for the editor.
 
-    Sprites are grouped by character folder so the Show block can offer real
-    expression names instead of free text. Backgrounds and sounds are flat.
+    Sprite layout mirrors the original SDK exactly:
 
-    Returns ``{"characters": {char: [expr, ...]}, "backgrounds": [...], "sounds": [...]}``
+        characters/<character id>/<outfit>/<emotion>.png
+
+    so the Show block can offer a character, then that character's outfits, then
+    the emotions inside the chosen outfit — instead of asking the writer to
+    remember folder names.
+
+    A flat image is a background. Anything else with an image extension and at
+    least two path segments is treated as a sprite, with a missing outfit level
+    read as "default" so hand-made two-level folders still work.
+
+    Returns::
+
+        {
+          "characters": { "<id>": { "<outfit>": ["<emotion>", ...] } },
+          "backgrounds": [...],
+          "sounds": [...],
+        }
     """
     root = path / "assets"
-    characters: dict[str, set[str]] = {}
+    characters: dict[str, dict[str, set[str]]] = {}
     backgrounds: list[str] = []
     sounds: list[str] = []
 
@@ -223,15 +238,26 @@ def list_assets(path: Path) -> dict[str, list[str]]:
         if lower.endswith((".ogg", ".wav", ".mp3")):
             sounds.append(rel)
         elif lower.endswith((".png", ".jpg", ".jpeg")):
-            if "/" in rel:
-                parts = rel.split("/")
-                character, expression = parts[0], parts[-1].rsplit(".", 1)[0]
-                characters.setdefault(character, set()).add(expression)
-            else:
+            parts = rel.split("/")
+            if len(parts) == 1:
                 backgrounds.append(rel)
+                continue
+
+            # Drop the leading "characters/" so both layouts read the same:
+            #   characters/<id>/<outfit>/<emotion>.png   (SDK)
+            #   <id>/<outfit>/<emotion>.png              (bare)
+            sprite_parts = parts[1:] if parts[0] == "characters" else parts
+
+            emotion = sprite_parts[-1].rsplit(".", 1)[0]
+            character = sprite_parts[0]
+            outfit = sprite_parts[-2] if len(sprite_parts) >= 3 else "default"
+            characters.setdefault(character, {}).setdefault(outfit, set()).add(emotion)
 
     return {
-        "characters": {k: sorted(v) for k, v in sorted(characters.items())},
+        "characters": {
+            char: {outfit: sorted(exprs) for outfit, exprs in sorted(outfits.items())}
+            for char, outfits in sorted(characters.items())
+        },
         "backgrounds": sorted(backgrounds),
         "sounds": sorted(sounds),
     }

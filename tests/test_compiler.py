@@ -99,18 +99,64 @@ def test_studio_fields_stripped():
         assert not any(k.startswith("_") for k in action)
 
 
-def test_sprite_defaults_match_engine():
+def test_sprite_path_matches_sdk_layout():
+    """The SDK's characters.py is explicit about the three levels:
+    textures/<character id>/<outfit>/<emotion>.png
+    """
     files = {"main.story": [
         block("label", name="start"),
-        block("show", sprite="cupa", expression="happy", position="CENTER"),
+        block("show", sprite="cupa", outfit="default", expression="happy", position="CENTER"),
+        block("end"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    assert r.errors == [], r.errors
+    s = next(a for a in r.actions if a["type"] == "show_sprite")
+    assert s["location"] == "characters/cupa/default/happy.png"
+    assert (s["wRatio"], s["hRatio"]) == (16, 9)
+    assert (s["wFrameRatio"], s["hFrameRatio"]) == (4, 8)
+    assert (s["column"], s["row"]) == (7, 1)
+
+
+def test_sprite_outfit_defaults_when_omitted():
+    files = {"main.story": [
+        block("label", name="start"),
+        block("show", sprite="cupa", expression="happy"),
         block("end"),
     ]}
     r = compile_project(PROJECT, files, ["main.story"])
     s = next(a for a in r.actions if a["type"] == "show_sprite")
-    assert s["location"] == "cupa/happy.png"
-    assert (s["wRatio"], s["hRatio"]) == (16, 9)
-    assert (s["wFrameRatio"], s["hFrameRatio"]) == (4, 8)
-    assert (s["column"], s["row"]) == (7, 1)
+    assert s["location"] == "characters/cupa/default/happy.png"
+
+
+def test_dyn_location_written_for_outfit_variable():
+    files = {"main.story": [
+        block("label", name="start"),
+        block("show", sprite="cupa", outfit="default", expression="happy", outfit_var="cupa_outfit"),
+        block("end"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    s = next(a for a in r.actions if a["type"] == "show_sprite")
+    assert s["location"] == "characters/cupa/default/happy.png"
+    assert s["dyn_location"] == "characters/cupa/<cupa_outfit>/happy.png"
+
+
+@pytest.mark.parametrize("bad_field,bad_value", [
+    ("sprite", "Cupa"),
+    ("sprite", "cu pa"),
+    ("expression", "Happy"),
+    ("outfit", "Summer Clothes"),
+])
+def test_sprite_names_reject_uppercase_and_spaces(bad_field, bad_value):
+    """The SDK rejects these because they become lowercase texture paths."""
+    data = {"sprite": "cupa", "outfit": "default", "expression": "happy"}
+    data[bad_field] = bad_value
+    files = {"main.story": [
+        block("label", name="start"),
+        block("show", **data),
+        block("end"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    assert any("lowercase" in e for e in r.errors), r.errors
 
 
 def test_choice_labels_validated():

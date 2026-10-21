@@ -127,22 +127,48 @@ def _to_action_idle(_: dict) -> dict:
     return {"type": "idle_chat", "action": "idle_chat"}
 
 
+def sprite_path(character: str, outfit: str, emotion: str) -> str:
+    """Build a sprite path the way the original SDK does.
+
+    The SDK's characters.py states it plainly:
+
+        # In minecraft, character sprite will be located in
+        # textures/character.id/character.outfit/emotion.png
+        # show(cupa, "happy")  ->  textures/cupa/default/happy.png
+
+    Three levels, always: character id, outfit, emotion. Outfit is not
+    optional even though the 2024 mod never shipped outfit swapping — the SDK
+    author added it as groundwork so scripts would not need rewriting later.
+    """
+    return f"characters/{character}/{outfit}/{emotion}.png"
+
+
 def _to_action_show(d: dict) -> dict:
     sprite = d.get("sprite") or "character"
     expression = d.get("expression") or "normal"
+    outfit = d.get("outfit") or "default"
     position = d.get("position") or "CENTER"
     grid = dict(SPRITE_DEFAULTS)
     if position == "CUSTOM" and isinstance(d.get("custom"), dict):
         grid.update({k: d["custom"][k] for k in SPRITE_DEFAULTS if k in d["custom"]})
 
-    return {
+    action = {
         "type": "show_sprite",
         "action": "show",
         "sprite": sprite,
-        "location": f"{sprite}/{expression}.png",
+        "location": sprite_path(sprite, outfit, expression),
         "position": position,
         **grid,
     }
+
+    # dyn_location lets the outfit be chosen at runtime from a variable, so a
+    # character can change clothes mid-story without the script knowing which
+    # folder it will be. The SDK writes this for every sprite.
+    outfit_var = d.get("outfit_var")
+    if outfit_var:
+        action["dyn_location"] = f"characters/{sprite}/<{outfit_var}>/{expression}.png"
+
+    return action
 
 
 def _to_action_hide(d: dict) -> dict:
@@ -318,13 +344,30 @@ def block_from_action(action: dict) -> dict | None:
         return {"kind": kind, "data": {"choices": action.get("choice") or []}}
     if kind == "show":
         location = action.get("location") or ""
-        expression = location.rsplit("/", 1)[-1].removesuffix(".png") if "/" in location else "normal"
-        return {"kind": kind, "data": {
-            "sprite": action.get("sprite", "character"),
-            "expression": expression,
+        parts = location.split("/")
+        # characters/<id>/<outfit>/<emotion>.png
+        if len(parts) >= 4 and parts[0] == "characters":
+            character, outfit, filename = parts[1], parts[2], parts[-1]
+        elif len(parts) >= 2:
+            # Two-level (older studio output): <id>/<emotion>.png
+            character, outfit, filename = parts[0], "default", parts[-1]
+        else:
+            character, outfit, filename = "character", "default", location
+
+        data = {
+            "sprite": action.get("sprite") or character,
+            "outfit": outfit,
+            "expression": filename.removesuffix(".png") or "normal",
             "position": action.get("position", "CENTER"),
             "custom": {k: action.get(k) for k in SPRITE_DEFAULTS},
-        }}
+        }
+
+        # Recover the variable name from "characters/<id>/<var>/<emotion>.png".
+        dyn = action.get("dyn_location") or ""
+        if "<" in dyn:
+            data["outfit_var"] = dyn.split("<", 1)[1].split(">", 1)[0]
+
+        return {"kind": kind, "data": data}
     if kind == "hide":
         return {"kind": kind, "data": {"sprite": action.get("sprite", "character")}}
     if kind == "background":

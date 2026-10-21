@@ -18,6 +18,7 @@ and usable from CI without a browser.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -161,6 +162,22 @@ def compile_project(
                     f"but nothing jumps to it."
                 )
 
+        elif action.get("type") == "show_sprite":
+            # The SDK rejects sprite names with uppercase, whitespace or
+            # punctuation:
+            #
+            #   if re.search(r"[A-Z\s.,!?#@$*]", sprite):
+            #       raise ValueError("Sprite name cannot contain special
+            #       characters, white space, or uppercase letters.")
+            #
+            # Checking the composed path rather than the raw fields is what
+            # makes this work: outfit and expression are not keys in the action,
+            # they are segments of `location`, so validating action keys alone
+            # silently checked nothing.
+            bad_path = validate_sprite_path(action.get("location"))
+            if bad_path:
+                result.errors.append(f"Show sprite: {bad_path}")
+
     # ── pass 5: strip studio-only fields ────────────────────────────────────
     result.actions = [_strip(action) for action in actions]
 
@@ -210,6 +227,38 @@ def _ordered_names(
         return names
 
     return [holder] + [n for n in names if n != holder]
+
+
+# Characters the SDK refuses in a sprite name. Its pattern is
+# r"[A-Z\s.,!?#@$*]"; slashes are added because each name becomes one path
+# segment, so a slash would silently point at a different folder.
+_BAD_SPRITE_CHAR = re.compile(r"[A-Z\s.,!?#@$*\\/:]")
+
+
+def validate_sprite_path(location: str | None) -> str | None:
+    """Return an error message if a sprite path would break, else None.
+
+    Texture paths are lowercase-only in Minecraft. A capital letter or a space
+    does not fail loudly — it produces a missing texture at runtime, which looks
+    like the artist forgot a file. Better to stop it at compile time.
+    """
+    if not location:
+        return None
+
+    for segment in location.split("/"):
+        if not segment:
+            continue
+        if segment.startswith("<") and segment.endswith(">"):
+            continue  # a dyn_location placeholder, resolved at runtime
+        stem = segment[:-4] if segment.endswith(".png") else segment
+        bad = _BAD_SPRITE_CHAR.search(stem)
+        if bad:
+            return (
+                f'"{stem}" contains "{bad.group(0)}". Sprite names must be '
+                f"lowercase with no spaces or punctuation, because they become "
+                f"texture paths."
+            )
+    return None
 
 
 def _strip(action: dict) -> dict:

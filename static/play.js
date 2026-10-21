@@ -4,9 +4,16 @@
  * compiler that builds the exported resource pack, so what you test here is
  * what ships.
  *
- * The state panel is the point: the story routes on flags, so being able to
- * set `seen.night_01 = true` and watch it take a different branch is the
- * difference between guessing and knowing.
+ * The transport controls mirror what a script author actually needs:
+ *
+ *   Play   resume at the checkpoint — byte-for-byte what right-clicking the
+ *          maid does in game, so the preview cannot lie about behaviour
+ *   Stop   halt, keep everything (examine the frozen state)
+ *   Reset  clear every variable and the checkpoint, then start over
+ *
+ * There is deliberately no "restart from the top" button. The only way a story
+ * goes back to its opening is Reset, because that is the only thing the game
+ * itself offers: the cursor advances and never rewinds.
  *
  * URL: play.html?project=cupa
  */
@@ -19,8 +26,10 @@ const slug = params.get('project');
 const state = {
   payload: null,
   viewer: null,
-  variables: {},   // name -> value, applied to the viewer
+  runtime: null,
+  variables: {},   // injected by the writer; cleared by Reset
   isNight: false,
+  status: 'idle',  // idle | playing | stopped | ended
 };
 
 // ── boot ────────────────────────────────────────────────────────────────────
@@ -44,13 +53,17 @@ async function boot() {
 
   renderQuickFacts();
   renderVarList();
-  startViewer();
   wireControls();
+
+  // Build once; the transport buttons drive the same runtime instead of
+  // rebuilding it, so Stop genuinely freezes state and Restart keeps it.
+  mountViewer();
+  play();
 }
 
-// ── viewer ──────────────────────────────────────────────────────────────────
+// ── viewer lifecycle ────────────────────────────────────────────────────────
 
-function startViewer() {
+function mountViewer() {
   const container = $('vn-container');
   container.innerHTML = '';
 
@@ -64,32 +77,103 @@ function startViewer() {
       assetsPath: state.payload.assetsPath,
       debug: $('env-debug').checked,
     });
+    state.runtime = state.viewer.runtime;
 
-    // Apply whatever the writer has set before the first line runs, so the
-    // very first conditional sees the simulated state.
-    applyEnvironment();
-    for (const [name, value] of Object.entries(state.variables)) {
-      try {
-        state.viewer.setVariable(name, value);
-      } catch (err) {
-        console.warn('setVariable failed', name, err);
-      }
-    }
-
-    state.viewer.start();
+    // Track when the story ends so Play can offer a replay.
+    state.runtime.events.onFinish = () => {
+      state.status = 'ended';
+      renderTransport();
+      renderVarList();
+    };
   } catch (err) {
     showErrors([`Viewer failed to start: ${err.message}`]);
   }
 }
 
+/** Start from the top, or resume where the autosave checkpoint left off. */
+function play() {
+  if (!state.runtime) return;
+
+  applyEnvironment();
+  for (const [name, value] of Object.entries(state.variables)) {
+    try {
+      state.runtime.setVariable(name, value);
+    } catch (err) {
+      console.warn('setVariable failed', name, err);
+    }
+  }
+
+  state.runtime.start();
+  state.status = 'playing';
+  renderTransport();
+}
+
+/** A fresh playthrough: no variables, no checkpoint, no sprites. */
+function reset() {
+  // A fresh runtime has no variables and no checkpoint, so the cursor is back
+  // at the start label with nothing carried over. This is the only way back to
+  // the opening, mirroring the game.
+  state.variables = {};
+  state.isNight = false;
+  $('env-night').checked = false;
+  $('state-night').checked = false;
+
+  mountViewer();
+  applyEnvironment();
+  state.runtime.start();
+
+  state.status = 'playing';
+  renderTransport();
+  renderVarList();
+  renderQuickFacts();
+}
+
+/** Halt without discarding anything, so the state panel stays meaningful. */
+function stop() {
+  if (!state.runtime || typeof state.runtime.stop !== 'function') return;
+  state.runtime.stop();
+  state.status = 'stopped';
+  renderTransport();
+  renderVarList();
+}
+
+// ── transport ───────────────────────────────────────────────────────────────
+
+function renderTransport() {
+  const playBtn = $('btn-play');
+  const stopBtn = $('btn-stop');
+  const statusEl = $('play-status');
+
+  playBtn.textContent = {
+    idle: '▶ Play',
+    playing: '▶ Play',
+    stopped: '▶ Resume',
+    ended: '↻ Replay',
+  }[state.status] || '▶ Play';
+
+  playBtn.disabled = state.status === 'playing';
+  stopBtn.disabled = state.status !== 'playing';
+
+  statusEl.textContent = {
+    idle: 'ready',
+    playing: 'running',
+    stopped: 'stopped',
+    ended: 'finished',
+  }[state.status] || 'ready';
+
+  statusEl.className = `play-status ${state.status}`;
+}
+
+// ── environment ─────────────────────────────────────────────────────────────
+
 function applyEnvironment() {
-  if (!state.viewer) return;
-  // setEnvironment takes (key, value), and the engine only accepts keys it
-  // already knows — isNight and isDay. Environment is checked before locals and
-  // globals, so these read like any other conditional in a script.
+  if (!state.runtime) return;
+  // setEnvironment takes (key, value) and only accepts keys it knows:
+  // isNight and isDay. The engine checks environment before locals and
+  // globals, so a script reads these like any other conditional.
   try {
-    state.viewer.setEnvironment('isNight', state.isNight);
-    state.viewer.setEnvironment('isDay', !state.isNight);
+    state.runtime.setEnvironment('isNight', state.isNight);
+    state.runtime.setEnvironment('isDay', !state.isNight);
   } catch (err) {
     console.warn('setEnvironment failed', err);
   }
@@ -98,7 +182,11 @@ function applyEnvironment() {
 // ── controls ────────────────────────────────────────────────────────────────
 
 function wireControls() {
-  $('btn-restart').onclick = () => startViewer();
+  $('btn-play').onclick = play;
+  $('btn-reset').onclick = () => {
+    if (confirm('Reset clears every variable and starts over. Continue?')) reset();
+  };
+  $('btn-stop').onclick = stop;
 
   $('btn-vars').onclick = () => {
     const panel = $('state-panel');
@@ -114,14 +202,19 @@ function wireControls() {
     $('env-night').checked = night;
     $('state-night').checked = night;
     applyEnvironment();
+    renderVarList();
   };
 
   $('env-night').onchange = (e) => syncNight(e.target.checked);
   $('state-night').onchange = (e) => syncNight(e.target.checked);
 
   $('env-debug').onchange = () => {
-    // Debug mode is set at construction, so rebuild.
-    startViewer();
+    // Debug is a construction-time flag. Rebuild but carry the checkpoint so
+    // toggling it mid-read does not throw away the story position.
+    const checkpoint = state.runtime?.getVariable('_autosave');
+    mountViewer();
+    if (checkpoint) state.runtime.setVariable('_autosave', checkpoint);
+    play();
   };
 
   $('var-add-btn').onclick = addVariable;
@@ -132,16 +225,16 @@ function wireControls() {
 function addVariable() {
   const name = $('var-name').value.trim();
   if (!name) return;
-  const raw = $('var-value').value.trim();
-  const value = coerce(raw);
-
-  state.variables[name] = value;
+  setVar(name, coerce($('var-value').value.trim()));
   $('var-name').value = '';
   $('var-value').value = '';
+}
 
-  if (state.viewer) {
+function setVar(name, value) {
+  state.variables[name] = value;
+  if (state.runtime) {
     try {
-      state.viewer.setVariable(name, value);
+      state.runtime.setVariable(name, value);
     } catch (err) {
       console.warn('setVariable failed', name, err);
     }
@@ -151,8 +244,8 @@ function addVariable() {
 
 function removeVariable(name) {
   delete state.variables[name];
-  if (state.viewer?.deleteVariable) {
-    try { state.viewer.deleteVariable(name); } catch { /* not fatal */ }
+  if (state.runtime?.deleteVariable) {
+    try { state.runtime.deleteVariable(name); } catch { /* not fatal */ }
   }
   renderVarList();
 }
@@ -173,43 +266,75 @@ function renderVarList() {
   const list = $('var-list');
   list.innerHTML = '';
 
-  const entries = Object.entries(state.variables);
-  if (entries.length === 0) {
+  const injected = Object.entries(state.variables);
+
+  // Also surface what the story itself has set, so a run is inspectable
+  // rather than a black box.
+  const live = state.runtime?.variables ?? {};
+  const storyVars = Object.entries(live).filter(
+    ([k]) => !k.startsWith('_') && !(k in state.variables)
+  );
+
+  if (injected.length === 0 && storyVars.length === 0 && !live._autosave) {
     list.innerHTML = '<div class="var-empty">none set</div>';
     return;
   }
 
-  for (const [name, value] of entries) {
-    const row = document.createElement('div');
-    row.className = 'var-row';
+  for (const [name, value] of injected) {
+    list.appendChild(varRow(name, value, () => removeVariable(name)));
+  }
 
-    const n = document.createElement('span');
-    n.className = 'var-name';
-    n.textContent = name;
-    n.title = name;
+  for (const [name, value] of storyVars) {
+    const row = varRow(name, value, null);
+    row.title = 'Set by the story';
+    list.appendChild(row);
+  }
 
-    const v = document.createElement('span');
-    v.className = 'var-value';
-    v.textContent = JSON.stringify(value);
+  // The checkpoint is the single most useful thing to see while testing a
+  // spine: it is the cursor `next` wrote.
+  if (live._autosave) {
+    const row = varRow('_autosave', live._autosave, null);
+    row.title = 'Where the story will resume';
+    row.style.borderLeft = '2px solid var(--accent)';
+    list.appendChild(row);
+  }
+}
 
+function varRow(name, value, onDelete) {
+  const row = document.createElement('div');
+  row.className = 'var-row';
+
+  const n = document.createElement('span');
+  n.className = 'var-name';
+  n.textContent = name;
+  n.title = name;
+
+  const v = document.createElement('span');
+  v.className = 'var-value';
+  v.textContent = JSON.stringify(value);
+
+  row.append(n, v);
+
+  if (onDelete) {
     const del = document.createElement('button');
     del.className = 'var-del';
     del.textContent = '✕';
     del.title = 'Remove';
-    del.onclick = () => removeVariable(name);
-
-    row.append(n, v, del);
-    list.appendChild(row);
+    del.onclick = onDelete;
+    row.appendChild(del);
+  } else {
+    row.appendChild(document.createElement('span'));
   }
+
+  return row;
 }
 
 function renderQuickFacts() {
   const wrap = $('quick-facts');
   wrap.innerHTML = '';
 
-  // Variables only. Day and night are NOT variables — in the engine they are
-  // condition types that read no variable at all, so they belong to the world
-  // toggle above, not to this list where they would imply you can set them.
+  // Variables only. Day and night are NOT variables — they are condition types
+  // that read no variable at all, so they belong to the world toggle above.
   const vars = state.payload.suggestedVars ?? [];
 
   if (vars.length === 0) {
@@ -221,10 +346,6 @@ function renderQuickFacts() {
     const btn = document.createElement('button');
     btn.className = 'fact';
 
-    // The viewer compares with strict equality against the raw `value` in the
-    // action, so injected state must match its TYPE: a boolean false never
-    // equals the string "false". The interesting state is the one that makes
-    // the test FAIL, because that is the branch you cannot reach by playing.
     const tested = coerce(v.value);
     const flip = oppositeOf(tested, v.condition);
 
@@ -245,25 +366,21 @@ function renderQuickFacts() {
  * the engine's strict comparisons behave.
  *
  * The condition matters: for equality the opposite is "anything else", but for
- * `less_than` the opposite is "greater than or equal", not "different". Getting
- * this wrong produces a fact button that sets a value the story still accepts.
+ * `less_than` the opposite is "greater than or equal", not "different".
  */
 function oppositeOf(tested, condition = 'equal') {
-  if (typeof tested === 'boolean') {
-    // true/false flip cleanly under equal and not_equal alike.
-    return !tested;
-  }
+  if (typeof tested === 'boolean') return !tested;
 
   if (typeof tested === 'number') {
     switch (condition) {
       case 'less_than':
       case 'less_or_equal':
-        return tested + 1;          // step above the ceiling
+        return tested + 1;
       case 'greater_than':
       case 'greater_or_equal':
-        return Math.max(0, tested - 1); // step below the floor
+        return Math.max(0, tested - 1);
       default:
-        return tested === 0 ? 1 : 0;   // equal / not_equal
+        return tested === 0 ? 1 : 0;
     }
   }
 
@@ -272,18 +389,6 @@ function oppositeOf(tested, condition = 'equal') {
   }
 
   return 'set';
-}
-
-function setVar(name, value) {
-  state.variables[name] = value;
-  if (state.viewer) {
-    try {
-      state.viewer.setVariable(name, value);
-    } catch (err) {
-      console.warn('setVariable failed', name, err);
-    }
-  }
-  renderVarList();
 }
 
 // ── errors ──────────────────────────────────────────────────────────────────
@@ -306,5 +411,6 @@ boot();
 window.__hikarin = {
   get state() { return state; },
   get viewer() { return state.viewer; },
-  get env() { return state.viewer?.runtime?.environment; },
+  get runtime() { return state.runtime; },
+  get env() { return state.runtime?.environment; },
 };

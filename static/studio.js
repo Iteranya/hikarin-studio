@@ -252,7 +252,7 @@ function summarise(block) {
     case 'idle':
       return '<span class="block-sub">random unlocked line</span>';
     case 'show':
-      return `<b>${esc(d.sprite || '?')}</b> <span class="block-sub">${esc(d.expression || 'normal')} · ${esc((d.position || 'center').toLowerCase())}</span>`;
+      return `<b>${esc(d.sprite || '?')}</b> <span class="block-sub">${esc(d.outfit || 'default')}/${esc(d.expression || 'normal')} · ${esc((d.position || 'center').toLowerCase())}</span>`;
     case 'hide':
       return `<b>${esc(d.sprite || '?')}</b>`;
     case 'background':
@@ -409,8 +409,13 @@ function fieldsFor(block) {
       break;
 
     case 'show':
+      // Mirrors the SDK's characters.py: textures/<id>/<outfit>/<emotion>.png.
+      // Three levels, always — outfit is not optional even when there is only
+      // one, so adding outfits later never means rewriting every Show block.
       all.push({ key: 'sprite', label: 'Character', render: () => spritePicker(d) });
-      all.push(text('expression', 'Expression', 'normal', 'Image file under assets/<character>/'));
+      all.push(text('outfit', 'Outfit', 'default', 'Folder under the character. Use "default" unless you have variants.'));
+      all.push(text('expression', 'Expression', 'normal', 'File name without .png'));
+      all.push({ key: 'outfit_var', label: 'Outfit from variable (optional)', render: () => outfitVarField(d) });
       all.push({ key: 'position', label: 'Position', render: () => selectEl(d, 'position', state.meta.positions) });
       break;
 
@@ -633,6 +638,31 @@ function conditionPicker(data) {
     renderInspector();
   };
   return wrapField('Test', el);
+}
+
+/**
+ * Optional variable that chooses the outfit at runtime.
+ *
+ * The SDK writes a second path for this:
+ *   characters/<id>/<outfit_var>/<emotion>.png
+ * so a script can dress a character differently without branching its own
+ * Show blocks. Leave empty to use the fixed outfit above.
+ */
+function outfitVarField(d) {
+  const el = document.createElement('input');
+  el.value = d.outfit_var ?? '';
+  el.placeholder = 'e.g. cupa_outfit';
+  el.oninput = () => {
+    const v = el.value.trim();
+    if (v) d.outfit_var = v;
+    else delete d.outfit_var;
+    commit();
+  };
+  return wrapField(
+    'Outfit from variable (optional)',
+    el,
+    'When set, the engine builds characters/<id>/<variable>/<emotion>.png and uses it if the variable is defined.'
+  );
 }
 
 function spritePicker(data) {

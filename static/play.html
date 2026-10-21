@@ -3,12 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <title>Hikarin Studio — Preview</title>
-<link rel="stylesheet" href="play.css">
+<link rel="stylesheet" href="play.css?v=3">
 </head>
 <body>
 
 <header class="playbar">
   <span class="play-title" id="play-title">Preview</span>
+  <span class="play-status" id="play-status">ready</span>
 
   <div class="play-controls">
     <label class="toggle">
@@ -16,7 +17,14 @@
       <span>Night</span>
     </label>
 
-    <button class="btn" id="btn-restart" title="Restart from the start label">↺ Restart</button>
+    <span class="divider"></span>
+
+    <button class="btn primary" id="btn-play" title="Exactly what right-clicking the maid does: resume at the checkpoint">▶ Play</button>
+    <button class="btn" id="btn-stop" title="Halt without discarding state" disabled>⏸ Stop</button>
+    <button class="btn danger" id="btn-reset" title="Clear every variable and checkpoint, then start over">⏹ Reset</button>
+
+    <span class="divider"></span>
+
     <button class="btn" id="btn-vars" title="Variables and facts">⚙ State</button>
     <label class="toggle">
       <input type="checkbox" id="env-debug">
@@ -76,7 +84,7 @@
 
 </div>
 
-<script src="vendor/hikarin-vn-viewer.umd.js"></script>
-<script type="module" src="play.js"></script>
+<script src="vendor/hikarin-vn-viewer.umd.js?v=2"></script>
+<script type="module" src="play.js?v=3"></script>
 </body>
 </html>

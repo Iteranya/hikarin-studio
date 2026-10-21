@@ -70,19 +70,38 @@ def test_save_deletes_removed_files(temp_root):
     assert not (temp_root / "cupa" / "night.story").exists(), "deleted tab must not linger on disk"
 
 
-def test_asset_inventory_groups_characters(temp_root):
+def test_asset_inventory_reads_sdk_layout(temp_root):
+    """characters/<id>/<outfit>/<emotion>.png, per the original SDK."""
     store.create_project("cupa")
     assets = temp_root / "cupa" / "assets"
-    (assets / "cupa").mkdir()
-    (assets / "cupa" / "happy.png").write_bytes(b"x")
-    (assets / "cupa" / "angry.png").write_bytes(b"x")
+
+    default_dir = assets / "characters" / "cupa" / "default"
+    default_dir.mkdir(parents=True)
+    (default_dir / "happy.png").write_bytes(b"x")
+    (default_dir / "angry.png").write_bytes(b"x")
+
+    summer_dir = assets / "characters" / "cupa" / "summer"
+    summer_dir.mkdir(parents=True)
+    (summer_dir / "happy.png").write_bytes(b"x")
     (assets / "room.png").write_bytes(b"x")
     (assets / "click.ogg").write_bytes(b"x")
 
     inventory = store.list_assets(temp_root / "cupa")
-    assert inventory["characters"]["cupa"] == ["angry", "happy"]
+    assert inventory["characters"]["cupa"]["default"] == ["angry", "happy"]
+    assert inventory["characters"]["cupa"]["summer"] == ["happy"]
     assert inventory["backgrounds"] == ["room.png"]
     assert inventory["sounds"] == ["click.ogg"]
+
+
+def test_asset_inventory_tolerates_two_level_folders(temp_root):
+    """Hand-made <id>/<emotion>.png folders read as outfit "default"."""
+    store.create_project("cupa")
+    assets = temp_root / "cupa" / "assets"
+    (assets / "cupa").mkdir(parents=True)
+    (assets / "cupa" / "happy.png").write_bytes(b"x")
+
+    inventory = store.list_assets(temp_root / "cupa")
+    assert inventory["characters"]["cupa"]["default"] == ["happy"]
 
 
 def test_export_builds_real_resource_pack(temp_root):

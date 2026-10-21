@@ -27,6 +27,16 @@ from hikarin.exporter import build_pack, export_filename
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 
+# Editing a .js or .css file and reloading is the whole development loop for
+# this tool. A cached response makes an edit look like it did nothing, which has
+# already sent me hunting through the wrong file twice. Tell browsers to always
+# revalidate.
+NO_CACHE = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
 app = FastAPI(title="Hikarin Studio", version="0.1.0")
 
 
@@ -266,11 +276,20 @@ def export_project(slug: str):
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(STATIC / "index.html", headers=NO_CACHE)
+
+
+class NoCacheStatic(StaticFiles):
+    """StaticFiles that asks the browser not to cache anything."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers.update(NO_CACHE)
+        return response
 
 
 if STATIC.is_dir():
-    app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
+    app.mount("/", NoCacheStatic(directory=STATIC, html=True), name="static")
 
 
 if __name__ == "__main__":

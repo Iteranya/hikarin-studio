@@ -25,6 +25,12 @@ Two different meanings for the same key name in the shipped format.
 
 ## Sprite paths
 
-The engine resolves a sprite by `location`, e.g. `cupa/happy.png`, against
-`hikarin:textures/`, then the framework's own art, then `mobtalkerredux:`.
-The studio should emit `<character>/<expression>.png` and let the engine find it.
+The engine resolves a sprite by `location`, e.g.
+`characters/cupa/default/happy.png`, against `hikarin:textures/`, then the
+framework's own art, then `mobtalkerredux:`.
+
+Three levels, matching the SDK's `characters.py`: character, outfit, emotion.
+The outfit level is not optional — the 2024 mod never shipped outfit swapping,
+but the SDK author added it as groundwork so scripts would not need rewriting
+later. Skipping it here would have meant migrating every sprite reference once
+outfits landed, so the studio emits it from day one.

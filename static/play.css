@@ -58,9 +58,37 @@ html, body {
   cursor: pointer;
 }
 
-.btn:hover { background: #2a2f38; }
+.btn:hover:not(:disabled) { background: #2a2f38; }
+.btn:disabled { opacity: .35; cursor: not-allowed; }
+.btn.primary { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
+.btn.primary:hover:not(:disabled) { background: var(--accent); }
+.btn.danger { color: var(--error); }
+.btn.danger:hover:not(:disabled) { background: #3a2020; border-color: var(--error); }
 .btn.tiny { padding: 1px 6px; font-size: 11px; }
 .btn.ghost { background: transparent; }
+
+.play-status {
+  padding: 1px 8px;
+  border-radius: 9px;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+.play-status.playing { color: var(--ok); border-color: #35543a; }
+.play-status.stopped { color: var(--warn); border-color: #5a4a2a; }
+.play-status.ended { color: var(--accent); border-color: var(--accent-dim); }
+
+.divider {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+  flex: 0 0 auto;
+}
 
 .toggle {
   display: inline-flex;
