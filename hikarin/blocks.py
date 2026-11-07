@@ -323,6 +323,25 @@ def _to_action_command(d: dict) -> dict:
     return {"type": "command", "action": d.get("command") or ""}
 
 
+def _to_action_play_level(d: dict) -> dict:
+    """Leave the VN and play a PvZ Fusion custom level, then come back.
+
+    This is a PvZ-Fusion extension, not a Minecraft/TLM action. The shipped
+    JSON keeps level names (human-readable, typo-checked) plus optional
+    resume labels. ``on_complete`` empty means fall through to the next
+    block; ``on_fail`` empty means the runtime decides (retry by default).
+    The PvZ runtime resolves ``level`` to Fusion's internal levelNumber.
+    """
+    action = {
+        "type": "play_level",
+        "action": "play_level",
+        "level": (d.get("level") or d.get("level_name") or d.get("levelName") or ""),
+        "on_complete": (d.get("on_complete") or d.get("onComplete") or ""),
+        "on_fail": (d.get("on_fail") or d.get("onFail") or ""),
+    }
+    return action
+
+
 BUILDERS = {
     "say": _to_action_say,
     "choice": _to_action_choice,
@@ -344,6 +363,7 @@ BUILDERS = {
     "music": _to_action_music,
     "sound": _to_action_sound,
     "command": _to_action_command,
+    "playLevel": _to_action_play_level,
 }
 
 # ── action -> block (for loading a shipped JSON back into the editor) ────────
@@ -370,6 +390,8 @@ FROM_ACTION = {
     "take_item": "takeItem",
     "play_music": "music",
     "play_sound": "sound",
+    "command": "command",
+    "play_level": "playLevel",
 }
 
 
@@ -470,6 +492,12 @@ def block_from_action(action: dict) -> dict | None:
         return {"kind": kind, "data": {"music": action.get("music")}}
     if kind == "sound":
         return {"kind": kind, "data": {"sound": action.get("sound", "")}}
+    if kind == "playLevel":
+        return {"kind": kind, "data": {
+            "level": action.get("level", ""),
+            "on_complete": action.get("on_complete", ""),
+            "on_fail": action.get("on_fail", ""),
+        }}
     if kind == "idle" or kind == "end" or kind == "clearBackground":
         return {"kind": kind, "data": {}}
     return None

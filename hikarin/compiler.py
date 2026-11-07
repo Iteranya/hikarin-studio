@@ -159,6 +159,19 @@ def compile_project(
                     f"but nothing jumps to it."
                 )
 
+        elif action.get("type") == "play_level":
+            level = action.get("level")
+            if not level:
+                result.errors.append("A Play Level block has no level name.")
+            for key in ("on_complete", "on_fail"):
+                target = action.get(key)
+                if target and target not in known:
+                    suggestion = suggest(target, list(known))
+                    hint = f' Did you mean "{suggestion}"?' if suggestion else ""
+                    result.errors.append(
+                        f'Play Level {key} "{target}" which does not exist.{hint}'
+                    )
+
         elif action.get("type") == "show_sprite":
             # The SDK rejects sprite names with uppercase, whitespace or
             # punctuation:

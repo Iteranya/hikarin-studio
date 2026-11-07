@@ -38,6 +38,7 @@ Ids are sequential from 0 and unique. The engine looks actions up by id.
 | `night_choice` | `choice[]` | only shown at night |
 | `transition` | `action: "jump"`, `label` | optional `file` for cross-scene |
 | `command` | `command` | runs a Minecraft command |
+| `play_level` | `level` | **PvZ Fusion extension:** leave the VN, play this custom level, then resume. Optional `on_complete` / `on_fail` labels; empty = fall through / retry |
 | `give_item` | `item`, `amount` | |
 | `take_item` | `item`, `amount` | |
 | `play_music` | `music` | null stops |

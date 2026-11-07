@@ -86,7 +86,7 @@ const GROUP_COLOURS = {
 const ICONS = {
   say: '💬', choice: '🔀', nightChoice: '🌙', idle: '🗣️',
   show: '🎭', hide: '👋', background: '🖼️', clearBackground: '⬛',
-  label: '🏷️', jump: '➡️', if: '❓', next: '⏭️', end: '🏁',
+  label: '🏷️', jump: '➡️', if: '❓', next: '⏭️', end: '🏁', playLevel: '▶️',
   setVar: '📝', unlock: '🔓', giveItem: '🎁', takeItem: '✋',
   music: '🎵', sound: '🔊', command: '⌨️',
 };
@@ -97,7 +97,7 @@ const TITLES = {
   clearBackground: 'Clear Background', label: 'Label', jump: 'Jump', if: 'If',
   next: 'Resume Point', end: 'End Scene', setVar: 'Set Variable', unlock: 'Unlock',
   giveItem: 'Give Item', takeItem: 'Take Item', music: 'Music', sound: 'Sound',
-  command: 'Command',
+  command: 'Command', playLevel: 'Play Level (PvZ)',
 };
 
 // Blocks the palette shows, in palette order. Not every engine action gets a
@@ -106,7 +106,7 @@ const TITLES = {
 const PALETTE = [
   ['talk', ['say', 'choice', 'nightChoice', 'idle']],
   ['stage', ['show', 'hide', 'background', 'clearBackground']],
-  ['flow', ['label', 'jump', 'if', 'next', 'end']],
+  ['flow', ['label', 'jump', 'if', 'next', 'end', 'playLevel']],
   ['state', ['setVar', 'unlock', 'giveItem', 'takeItem']],
   ['audio', ['music', 'sound']],
 ];
@@ -286,6 +286,8 @@ function summarise(block) {
     }
     case 'next':
       return `<span class="block-sub">resume here next time →</span> <b>${esc(d.target || '?')}</b>`;
+    case 'playLevel':
+      return `<span class="block-sub">play →</span> <b>${esc(d.level || '?')}</b>`;
     case 'end':
       return '<span class="block-sub">close the screen</span>';
     case 'setVar': {
@@ -342,6 +344,8 @@ function defaultData(kind) {
     case 'giveItem':
     case 'takeItem':
       return { item: '', amount: 1 };
+    case 'playLevel':
+      return { level: '', on_complete: '', on_fail: '' };
     case 'unlock':
       return { labels: [] };
     default:
@@ -560,6 +564,14 @@ function fieldsFor(block) {
     case 'takeItem':
       all.push(text('item', 'Item id', 'minecraft:end_rod'));
       all.push({ key: 'amount', label: 'Count', render: () => numberInput(d, 'amount', 1) });
+      break;
+
+    case 'playLevel':
+      // PvZ Fusion extension: level is a name the PvZ runtime resolves to
+      // Fusion's levelNumber. Resume labels are regular global labels.
+      all.push(text('level', 'Level name', 'boss_fight_1', 'Custom level name to play, then resume the VN.'));
+      all.push({ key: 'on_complete', label: 'On complete, go to', render: () => labelPicker(d, 'on_complete') });
+      all.push({ key: 'on_fail', label: 'On fail, go to', render: () => labelPicker(d, 'on_fail') });
       break;
 
     case 'music':
