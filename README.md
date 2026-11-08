@@ -135,6 +135,39 @@ Minecraft mod are built against.
 type labels; and `label` means *jump target* in a choice but *speaker* in
 dialogue.
 
+
+## Project management
+
+Use the **Projects** controls in the top bar (or the API):
+
+- **New** — create a project
+- **Open** — pick any project from the dropdown
+- **Duplicate** — copy a project to a new slug
+- **Rename** — move a project folder to a new slug
+- **Delete** — remove a project folder
+- **Import** — upload a `.hikarin.zip` project bundle (from the project export)
+
+API equivalents:
+
+```
+POST /api/projects/{slug}/duplicate  {"new_slug": "..."}
+POST /api/projects/{slug}/rename     {"new_slug": "..."}
+POST /api/projects/import-zip?slug=...   (body: .hikarin.zip)
+DELETE /api/projects/{slug}
+```
+
+## Export formats
+
+`GET /api/projects/{slug}/export?format=...`
+
+| format | output |
+|---|---|
+| `pack` | Minecraft resource pack `.zip` (default) |
+| `json` | Compiled story JSON (`<character>.json`) |
+| `txt` | Plain-text script |
+| `md` | Markdown script, labels as `##` headings |
+| `bundle` | Project bundle `.hikarin.zip` for import/backup |
+
 ## Test
 
 ```bash

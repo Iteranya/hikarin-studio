@@ -21,10 +21,23 @@
   </div>
 
   <div class="topbar-actions">
+    <select id="project-select" class="select" title="Open a project"></select>
     <button class="btn" id="btn-new" title="Create a new project">New</button>
+    <button class="btn" id="btn-duplicate" title="Duplicate current project">Duplicate</button>
+    <button class="btn" id="btn-rename" title="Rename current project">Rename</button>
+    <button class="btn" id="btn-delete" title="Delete current project">Delete</button>
+    <button class="btn" id="btn-import" title="Import a .hikarin.zip project bundle">Import</button>
+    <input type="file" id="file-import" accept=".zip" hidden>
     <button class="btn" id="btn-save" title="Save (Ctrl+S)">💾 Save</button>
     <button class="btn primary" id="btn-play" disabled title="Test this scene">▶ Play</button>
-    <button class="btn" id="btn-export" disabled title="Export a resource pack">📦 Export</button>
+    <select id="export-format" class="select" title="Export format">
+      <option value="pack">Pack (.zip)</option>
+      <option value="json">Story (.json)</option>
+      <option value="txt">Script (.txt)</option>
+      <option value="md">Script (.md)</option>
+      <option value="bundle">Project (.hikarin.zip)</option>
+    </select>
+    <button class="btn" id="btn-export" disabled title="Export current project">📦 Export</button>
   </div>
 </header>
 
