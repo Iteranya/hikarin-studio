@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from hikarin import blocks as block_defs
 from hikarin import projects as project_store
 from hikarin.compiler import compile_project
-from hikarin.exporter import build_pack, export_filename
+from hikarin.exporter import (build_json, build_markdown, build_pack, build_project_bundle, build_text, export_filename, export_filename_for)
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -55,6 +55,14 @@ class SaveRequest(BaseModel):
 class CreateRequest(BaseModel):
     slug: str
     meta: dict = Field(default_factory=dict)
+
+
+class RenameRequest(BaseModel):
+    new_slug: str
+
+
+class DuplicateRequest(BaseModel):
+    new_slug: str
 
 
 # ── meta ────────────────────────────────────────────────────────────────────
@@ -116,6 +124,32 @@ def delete_project(slug: str):
         return {"deleted": True}
     except project_store.ProjectError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+@app.post("/api/projects/{slug}/duplicate")
+def duplicate_endpoint(slug: str, req: DuplicateRequest):
+    try:
+        return project_store.duplicate_project(slug, req.new_slug)
+    except project_store.ProjectError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/projects/{slug}/rename")
+def rename_endpoint(slug: str, req: RenameRequest):
+    try:
+        return project_store.rename_project(slug, req.new_slug)
+    except project_store.ProjectError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/projects/import-zip")
+async def import_zip_endpoint(request: Request, slug: str = "imported"):
+    payload = await request.body()
+    if not payload:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    try:
+        return project_store.import_project_zip(slug, payload)
+    except project_store.ProjectError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # ── compile ─────────────────────────────────────────────────────────────────
@@ -252,7 +286,7 @@ def serve_asset(slug: str, path: str):
 # ── export ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/projects/{slug}/export")
-def export_project(slug: str):
+def export_project(slug: str, format: str = "pack"):
     """Compile and return a ready-to-install resource pack zip."""
     try:
         loaded = project_store.load_project(slug)
@@ -266,15 +300,34 @@ def export_project(slug: str):
             content={"ok": False, "errors": result.errors, "warnings": result.warnings},
         )
 
+    fmt = (format or "pack").lower()
+    import io as _io
+    import json as _json
     try:
-        payload = build_pack(loaded["meta"], result, project_store.project_dir(slug))
+        if fmt == "pack":
+            payload = build_pack(loaded["meta"], result, project_store.project_dir(slug))
+            media = "application/zip"
+        elif fmt == "json":
+            payload = build_json(loaded["meta"], result)
+            media = "application/json"
+        elif fmt == "txt":
+            payload = build_text(loaded["meta"], result)
+            media = "text/plain"
+        elif fmt == "md":
+            payload = build_markdown(loaded["meta"], result)
+            media = "text/markdown"
+        elif fmt == "bundle":
+            payload = build_project_bundle(loaded["meta"], loaded["files"], project_store.project_dir(slug))
+            media = "application/zip"
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown export format: {format!r} (pack|json|txt|md|bundle)")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    filename = export_filename(loaded["meta"])
+    filename = export_filename_for(loaded["meta"], fmt)
     return Response(
         content=payload,
-        media_type="application/zip",
+        media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

@@ -32,6 +32,18 @@ async function boot() {
 
 async function refreshProjectList() {
   const projects = await fetch('/api/projects').then((r) => r.json());
+  const sel = document.getElementById('project-select');
+  if (sel) {
+    const current = state.project?.slug;
+    sel.innerHTML = '';
+    for (const p of projects) {
+      const opt = document.createElement('option');
+      opt.value = p.slug;
+      opt.textContent = (p.packName || p.slug) + ' (' + p.slug + ')';
+      if (p.slug === current) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
   if (projects.length === 0) {
     setStatus('compile', 'no projects yet — press New', 'warn');
     return;
@@ -44,6 +56,7 @@ async function refreshProjectList() {
 async function openProject(slug) {
   const data = await fetch(`/api/projects/${slug}`).then((r) => r.json());
   state.project = data;
+  const sel = document.getElementById('project-select'); if (sel) sel.value = slug;
   state.activeFile = data.meta.files[0] ?? null;
   state.selected = null;
   state.dirty = false;
@@ -1340,6 +1353,12 @@ function wireChrome() {
   $('btn-export').onclick = exportPack;
   $('btn-play').onclick = play;
   $('btn-save').onclick = save;
+  $('btn-duplicate').onclick = duplicateProject;
+  $('btn-rename').onclick = renameProject;
+  $('btn-delete').onclick = deleteProject;
+  $('btn-import').onclick = () => $('file-import').click();
+  document.getElementById('project-select').onchange = (e) => { if (e.target.value) openProject(e.target.value); };
+  document.getElementById('file-import').onchange = importProjectFile;
 
   // Ctrl+S saves, Ctrl+Enter validates.
   document.addEventListener('keydown', (e) => {
@@ -1435,7 +1454,59 @@ async function validate() {
 
 async function exportPack() {
   if (!state.project) return;
-  window.location = `/api/projects/${state.project.slug}/export`;
+  if (state.dirty) { await save(); }
+  const fmt = document.getElementById('export-format')?.value || 'pack';
+  window.location = `/api/projects/${state.project.slug}/export?format=${encodeURIComponent(fmt)}`;
+}
+
+async function duplicateProject() {
+  if (!state.project) return;
+  const new_slug = prompt('New project name (lowercase, no spaces)', state.project.slug + '-copy');
+  if (!new_slug) return;
+  const res = await fetch(`/api/projects/${state.project.slug}/duplicate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ new_slug }),
+  });
+  if (!res.ok) { alert((await res.json()).detail || 'Duplicate failed'); return; }
+  await refreshProjectList();
+  await openProject(new_slug);
+}
+
+async function renameProject() {
+  if (!state.project) return;
+  const new_slug = prompt('New project name (lowercase, no spaces)', state.project.slug);
+  if (!new_slug || new_slug === state.project.slug) return;
+  const res = await fetch(`/api/projects/${state.project.slug}/rename`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ new_slug }),
+  });
+  if (!res.ok) { alert((await res.json()).detail || 'Rename failed'); return; }
+  await refreshProjectList();
+  await openProject(new_slug);
+}
+
+async function deleteProject() {
+  if (!state.project) return;
+  if (!confirm(`Delete project "${state.project.slug}"? This removes its folder and all .story files.`)) return;
+  const slug = state.project.slug;
+  const res = await fetch(`/api/projects/${slug}`, { method: 'DELETE' });
+  if (!res.ok) { alert((await res.json()).detail || 'Delete failed'); return; }
+  state.project = null;
+  await refreshProjectList();
+}
+
+async function importProjectFile(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const slug = prompt('Project name to import as (lowercase, no spaces)', file.name.replace(/\.hikarin?\.zip$/i, '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase()) || 'imported';
+  const buf = await file.arrayBuffer();
+  const res = await fetch(`/api/projects/import-zip?slug=${encodeURIComponent(slug)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: buf,
+  });
+  e.target.value = '';
+  if (!res.ok) { alert((await res.json()).detail || 'Import failed'); return; }
+  await refreshProjectList();
+  await openProject(slug);
 }
 
 // The preview saves first: testing unsaved edits would be a lie, and the

@@ -46,9 +46,11 @@ assigns ids, so reordering blocks never causes a numbering conflict.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import shutil
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -348,3 +350,76 @@ def list_assets(path: Path) -> dict[str, Any]:
         "sounds": sorted(sounds),
         "music": sorted(music),
     }
+
+
+# ── duplicate / rename / import ─────────────────────────────────────────────
+
+def duplicate_project(slug: str, new_slug: str) -> dict[str, Any]:
+    src = project_dir(slug)
+    if not src.is_dir():
+        raise ProjectError(f"Project '{slug}' does not exist")
+    dest = project_dir(new_slug)
+    if dest.exists() and any(dest.iterdir()):
+        raise ProjectError(f"Project '{new_slug}' already exists")
+    shutil.copytree(src, dest)
+    return load_project(new_slug)
+
+
+def rename_project(slug: str, new_slug: str) -> dict[str, Any]:
+    src = project_dir(slug)
+    if not src.is_dir():
+        raise ProjectError(f"Project '{slug}' does not exist")
+    dest = project_dir(new_slug)
+    if dest.exists() and any(dest.iterdir()):
+        raise ProjectError(f"Project '{new_slug}' already exists")
+    src.rename(dest)
+    return load_project(new_slug)
+
+
+def import_project_zip(slug: str, payload: bytes) -> dict[str, Any]:
+    """Import a .hikarin.zip project bundle (or any zip containing project.json)."""
+    dest = project_dir(slug)
+    if dest.exists() and any(dest.iterdir()):
+        raise ProjectError(f"Project '{slug}' already exists")
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(payload))
+    except zipfile.BadZipFile as e:
+        raise ProjectError(f"Not a valid zip file: {e}") from e
+
+    names = zf.namelist()
+    # Find project.json at root or one level deep
+    prefix = ""
+    if "project.json" not in names:
+        candidates = [n for n in names if n.endswith("/project.json")]
+        if len(candidates) != 1:
+            raise ProjectError("Zip must contain a single project.json")
+        prefix = candidates[0][:-len("project.json")]
+
+    dest_path = dest.resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+    try:
+        for name in names:
+            if name.endswith("/"):
+                continue
+            rel = name[len(prefix):] if prefix else name
+            target = (dest / rel)
+            # guard traversal
+            try:
+                target.resolve().relative_to(dest_path)
+            except ValueError:
+                raise ProjectError(f"Zip entry escapes project folder: {name}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(zf.read(name))
+    except Exception:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise
+
+    if not (dest / "project.json").is_file():
+        shutil.rmtree(dest, ignore_errors=True)
+        raise ProjectError("Zip must contain project.json")
+    try:
+        return load_project(slug)
+    except ProjectError:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise
+
