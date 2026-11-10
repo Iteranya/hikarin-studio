@@ -23,6 +23,30 @@ const state = {
   lastCompile: null,
 };
 
+// ── autosave ────────────────────────────────────────────────────────────────
+//
+// Everything writes itself. There is no "remember to save" step to forget, and
+// no amber chip to lose an afternoon to.
+//
+// The shape is write-behind: an edit marks the project dirty and starts a timer;
+// further edits restart it. When it fires, the whole project goes up in one PUT,
+// because that is the endpoint that exists and a story is small.
+//
+// Two rules keep it honest:
+//   * one PUT at a time. A second save while the first is open sets `queued`
+//     and the in-flight one re-schedules when it lands — two overlapping writes
+//     racing on the same file is how a save silently reverts an edit.
+//   * a save is flushed before anything that reads the files from disk (project
+//     switch, preview) so the disk and the screen never disagree.
+const AUTOSAVE_DELAY = 900;      // ms of idle after the last edit
+
+const autosave = {
+  timer: null,
+  inFlight: null,
+  queued: false,
+  retry: null,
+};
+
 // ── boot ────────────────────────────────────────────────────────────────────
 
 async function boot() {
@@ -67,6 +91,10 @@ async function refreshProjectList() {
 }
 
 async function openProject(slug) {
+  // Whatever is on screen has to be on disk before the next project's files are
+  // read, or an autosave can land on the project you just left.
+  if (state.project) await flushAutosave();
+
   const data = await fetch(`/api/projects/${slug}`).then((r) => r.json());
   state.project = data;
   const sel = document.getElementById('project-select'); if (sel) sel.value = slug;
@@ -1422,6 +1450,26 @@ function markDirty() {
   state.dirty = true;
   $('project-name').classList.add('dirty');
   renderTabs();
+  scheduleAutosave();
+}
+
+/** Start (or restart) the idle timer that writes the project to disk. */
+function scheduleAutosave(delay = AUTOSAVE_DELAY) {
+  if (!state.project) return;
+  clearTimeout(autosave.timer);
+  autosave.timer = setTimeout(() => {
+    autosave.timer = null;
+    save({ silent: true });
+  }, delay);
+}
+
+/** Write now if anything is pending. Used before switching or previewing. */
+async function flushAutosave() {
+  if (autosave.timer) {
+    clearTimeout(autosave.timer);
+    autosave.timer = null;
+  }
+  if (state.dirty || autosave.inFlight) await save({ silent: true });
 }
 
 function updateCounts() {
@@ -1449,13 +1497,29 @@ function wireChrome() {
   $('btn-compile').onclick = validate;
   $('btn-export').onclick = exportPack;
   $('btn-play').onclick = play;
-  $('btn-save').onclick = save;
+  $('btn-save').onclick = () => save();
   $('btn-duplicate').onclick = duplicateProject;
   $('btn-rename').onclick = renameProject;
   $('btn-delete').onclick = deleteProject;
   $('btn-import').onclick = () => $('file-import').click();
   document.getElementById('project-select').onchange = (e) => { if (e.target.value) openProject(e.target.value); };
   document.getElementById('file-import').onchange = importProjectFile;
+
+  // Last line of defence: the tab is closing mid-edit, before the debounce
+  // fired. `keepalive` lets the request outlive the page. Browsers cap such
+  // bodies at 64 KB, so a big project simply loses the race — the debounce
+  // covers all but the last ~second of typing anyway.
+  window.addEventListener('beforeunload', () => {
+    if (!state.project || !state.dirty || autosave.inFlight) return;
+    const blob = new Blob([JSON.stringify(saveBody())], { type: 'application/json' });
+    if (blob.size > 60000) return;
+    fetch(`/api/projects/${state.project.slug}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: blob,
+      keepalive: true,
+    }).catch(() => {});
+  });
 
   // Ctrl+S saves, Ctrl+Enter validates.
   document.addEventListener('keydown', (e) => {
@@ -1492,38 +1556,96 @@ async function newProject() {
   await openProject(slug);
 }
 
-async function save() {
-  if (!state.project) return;
+/** The exact payload the server expects, built from live state. */
+function saveBody(project = state.project) {
+  const body = { meta: project.meta, files: {} };
+  for (const file of project.meta.files) {
+    body.files[file] = project.files[file] ?? [];
+  }
+  return body;
+}
 
-  const body = {
-    meta: state.project.meta,
-    files: {},
-  };
-  for (const file of state.project.meta.files) {
-    body.files[file] = state.project.files[file] ?? [];
+/**
+ * Write the project to disk.
+ *
+ * `silent` is the autosave path: a failure shows in the status bar and retries
+ * instead of throwing a modal in your face mid-sentence. A manual save (button,
+ * Ctrl+S) still complains loudly, because you asked for it.
+ */
+async function save({ silent = false } = {}) {
+  if (!state.project) return false;
+
+  if (autosave.timer) {
+    clearTimeout(autosave.timer);
+    autosave.timer = null;
   }
 
-  const res = await fetch(`/api/projects/${state.project.slug}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const err = await res.json();
-    alert(err.detail || 'Save failed.');
-    return;
+  // One write at a time. Queue and let the in-flight save re-schedule, so two
+  // PUTs cannot race on the same files and undo each other.
+  if (autosave.inFlight) {
+    autosave.queued = true;
+    return autosave.inFlight;
   }
 
-  state.dirty = false;
-  $('project-name').classList.remove('dirty');
-  renderTabs();
-  setStatus('compile', 'saved', 'ok');
-  setTimeout(() => state.lastCompile && setStatus('compile', state.lastCompile), 2000);
+  const project = state.project;
+  const body = saveBody(project);
+
+  autosave.inFlight = (async () => {
+    try {
+      const res = await fetch(`/api/projects/${project.slug}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Save failed (${res.status})`);
+      }
+
+      // Only clear the flag if the project on screen is still the one written —
+      // a save finishing after a switch must not mark the new project clean.
+      if (state.project === project) {
+        state.dirty = false;
+        $('project-name').classList.remove('dirty');
+        renderTabs();
+        setStatus('compile', silent ? 'autosaved' : 'saved', 'ok');
+        if (state.lastCompile) {
+          setTimeout(() => {
+            if (!state.dirty) setStatus('compile', state.lastCompile);
+          }, 2500);
+        }
+      }
+      return true;
+    } catch (err) {
+      const message = String(err.message ?? err);
+      if (state.project === project) {
+        setStatus('compile', `save failed — ${message}`, 'error');
+        if (silent) {
+          clearTimeout(autosave.retry);
+          autosave.retry = setTimeout(() => scheduleAutosave(0), 4000);
+        } else {
+          alert(message);
+        }
+      }
+      return false;
+    } finally {
+      autosave.inFlight = null;
+      if (autosave.queued) {
+        autosave.queued = false;
+        scheduleAutosave(0);
+      }
+    }
+  })();
+
+  return autosave.inFlight;
 }
 
 async function validate() {
   if (!state.project) return;
+  // Validate compiles the files on disk, so anything still in the debounce
+  // window would be reported one edit out of date.
+  await flushAutosave();
   setStatus('compile', 'compiling…');
 
   const res = await fetch(`/api/projects/${state.project.slug}/compile`);
@@ -1606,13 +1728,12 @@ async function importProjectFile(e) {
   await openProject(slug);
 }
 
-// The preview saves first: testing unsaved edits would be a lie, and the
-// compiler reads the files on disk.
+// The preview compiles the files on disk, so anything pending is flushed first.
 async function play() {
   if (!state.project) return;
   if (state.dirty) {
     setStatus('compile', 'saving before preview…');
-    await save();
+    await flushAutosave();
   }
   window.open(`play.html?project=${encodeURIComponent(state.project.slug)}`, '_blank');
 }
