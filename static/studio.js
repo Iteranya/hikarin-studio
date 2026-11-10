@@ -80,8 +80,18 @@ async function openProject(slug) {
   $('btn-export').disabled = false;
   $('btn-compile').disabled = false;
   $('btn-assets').disabled = false;
-  $('empty-state').hidden = true;
-  $('add-block').hidden = false;
+
+  // #empty-state lives *inside* #blocklist in index.html, and renderBlocks()
+  // wipes that list on every render — so from the second openProject() onwards
+  // the element is gone. Touching it unguarded threw a TypeError right here,
+  // halfway through the load, which aborted renderTabs/renderBlocks and left
+  // the previous project's blocks on screen. That is the whole "switching
+  // projects does nothing" bug: the fetch succeeded, the render never ran.
+  const emptyState = $('empty-state');
+  if (emptyState) emptyState.hidden = true;
+
+  const addBlock = $('add-block');
+  if (addBlock) addBlock.hidden = false;
 
   renderTabs();
   renderBlocks();
