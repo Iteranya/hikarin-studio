@@ -7,3 +7,6 @@ uv.lock.bak
 
 # Demo project: keep the folder shape, ignore local authoring state
 projects/*/assets/
+
+# Local run log
+server.log

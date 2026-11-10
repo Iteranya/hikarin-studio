@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from hikarin import assets as asset_store
 from hikarin import blocks as block_defs
 from hikarin import projects as project_store
 from hikarin.compiler import compile_project
@@ -63,6 +64,33 @@ class RenameRequest(BaseModel):
 
 class DuplicateRequest(BaseModel):
     new_slug: str
+
+
+class NewCharacterRequest(BaseModel):
+    character: str
+    outfit: str = "default"
+
+
+class NewOutfitRequest(BaseModel):
+    character: str
+    outfit: str
+
+
+class NewFolderRequest(BaseModel):
+    path: str
+
+
+class UploadedFile(BaseModel):
+    name: str
+    data: str  # base64, optionally behind a data: URL prefix
+
+
+class UploadRequest(BaseModel):
+    """Files land in ``dir``, a project-relative folder such as images/asset."""
+
+    dir: str
+    files: list[UploadedFile] = Field(default_factory=list)
+
 
 
 # ── meta ────────────────────────────────────────────────────────────────────
@@ -257,6 +285,82 @@ def _suggested_variables(files: dict[str, list[dict]]) -> list[dict]:
     return sorted(found.values(), key=lambda v: (v["scope"] != "PLAYER", v["name"]))
 
 
+# ── assets ──────────────────────────────────────────────────────────────────
+#
+# The asset manager window's half of the story: read the inventory, add a
+# character, add an outfit, make a folder, drop files in, delete something.
+# Every mutation answers with the fresh inventory so the window re-renders from
+# one source of truth instead of patching its own state and hoping.
+
+def _assets_or_400(fn, *args):
+    try:
+        return fn(*args)
+    except asset_store.AssetError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _inventory(slug: str) -> dict:
+    return asset_store.inventory(project_store.project_dir(slug))
+
+
+@app.get("/api/projects/{slug}/asset-list")
+def list_project_assets(slug: str):
+    """The full asset tree, without reloading the story files."""
+    try:
+        project_store.project_dir(slug)
+    except project_store.ProjectError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return _assets_or_400(_inventory, slug)
+
+
+@app.post("/api/projects/{slug}/assets/character")
+def create_character_asset(slug: str, req: NewCharacterRequest):
+    base = project_store.project_dir(slug)
+    created = _assets_or_400(asset_store.create_character, base, req.character, req.outfit)
+    return {"created": created, "assets": _assets_or_400(_inventory, slug)}
+
+
+@app.post("/api/projects/{slug}/assets/outfit")
+def create_outfit_asset(slug: str, req: NewOutfitRequest):
+    base = project_store.project_dir(slug)
+    created = _assets_or_400(asset_store.create_outfit, base, req.character, req.outfit)
+    return {"created": created, "assets": _assets_or_400(_inventory, slug)}
+
+
+@app.post("/api/projects/{slug}/assets/folder")
+def create_asset_folder(slug: str, req: NewFolderRequest):
+    base = project_store.project_dir(slug)
+    created = _assets_or_400(asset_store.create_folder, base, req.path)
+    return {"created": created, "assets": _assets_or_400(_inventory, slug)}
+
+
+@app.post("/api/projects/{slug}/assets/upload")
+def upload_assets(slug: str, req: UploadRequest):
+    """Save dropped or picked files into one folder.
+
+    Base64 in JSON rather than multipart: it keeps the app on FastAPI alone with
+    no extra install to break, and an image is not big enough for the encoding
+    overhead to matter. The 24 MB per-file ceiling is in ``hikarin.assets``.
+    """
+    base = project_store.project_dir(slug)
+    if not req.files:
+        raise HTTPException(status_code=400, detail="No files given")
+
+    decoded: list[tuple[str, bytes]] = []
+    for item in req.files:
+        decoded.append((item.name, _assets_or_400(asset_store.decode_upload, item.data)))
+
+    written = _assets_or_400(asset_store.write_uploads, base, req.dir, decoded)
+    return {"written": written, "assets": _assets_or_400(_inventory, slug)}
+
+
+@app.delete("/api/projects/{slug}/assets")
+def delete_asset(slug: str, path: str):
+    base = project_store.project_dir(slug)
+    deleted = _assets_or_400(asset_store.delete_path, base, path)
+    return {"deleted": deleted, "assets": _assets_or_400(_inventory, slug)}
+
+
 @app.get("/api/projects/{slug}/assets/{path:path}")
 def serve_asset(slug: str, path: str):
     """Serve a project's media files to the in-browser preview.
@@ -358,6 +462,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="127.0.0.1",
-        port=int(os.environ.get("HIKARIN_PORT", "8422")),
+        port=int(os.environ.get("HIKARIN_PORT", "8411")),
         reload=False,
     )

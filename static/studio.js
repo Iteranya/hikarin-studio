@@ -8,6 +8,8 @@
  * tabs and blocks freely without breaking anything.
  */
 
+import { initAssets, openAssets, deleteAssetPath } from './assets.js';
+
 const $ = (id) => document.getElementById(id);
 
 // ── state ───────────────────────────────────────────────────────────────────
@@ -26,8 +28,19 @@ const state = {
 async function boot() {
   state.meta = await fetch('/api/meta').then((r) => r.json());
   renderPalette();
+  // The asset window reads and writes media folders directly, so it needs the
+  // live state object and a way to tell the editor that a picker's options
+  // changed underneath it.
+  initAssets({ state, onChange: onAssetsChanged });
   await refreshProjectList();
   wireChrome();
+}
+
+/** Re-render whatever the asset window may have just changed. */
+function onAssetsChanged() {
+  if (!state.project) return;
+  renderInspector();
+  renderBlocks();
 }
 
 async function refreshProjectList() {
@@ -66,6 +79,7 @@ async function openProject(slug) {
   $('btn-play').disabled = false;
   $('btn-export').disabled = false;
   $('btn-compile').disabled = false;
+  $('btn-assets').disabled = false;
   $('empty-state').hidden = true;
   $('add-block').hidden = false;
 
@@ -241,9 +255,22 @@ function renderBlocks() {
     el.innerHTML = `
       <span class="block-icon">${ICONS[block.kind] ?? '•'}</span>
       <span class="block-text">${summarise(block)}</span>
+      <button class="block-del" title="Delete this block">✕</button>
     `;
 
     el.onclick = () => selectBlock(index);
+
+    // Delete straight from the row. The inspector has the same button, but
+    // needing to select a block before you can remove it is a pointless step —
+    // and for the Show block, whose form is tall, the inspector button was
+    // often scrolled out of sight, which read as "there is no delete here".
+    const del = el.querySelector('.block-del');
+    del.onclick = (event) => {
+      event.stopPropagation();
+      state.selected = { file: state.activeFile, index };
+      deleteBlock();
+    };
+
     list.appendChild(el);
   });
 }
@@ -387,16 +414,32 @@ function renderInspector() {
   const title = document.createElement('div');
   title.className = 'inspector-title';
   title.innerHTML = `<span>${ICONS[block.kind] ?? '•'}</span>${TITLES[block.kind] ?? block.kind}`;
-  body.appendChild(title);
 
   block.data ??= {};
+
+  // The Duplicate/Delete row goes at the TOP of the panel, not the bottom.
+  //
+  // It used to be appended last, after every field. For a Show block that means
+  // after the mode switch, the character picker, the outfit and expression
+  // pickers and the whole placement grid — a screen and a half of scrolling
+  // below where you clicked, which reads as "this block has no delete button".
+  // Pinning it under the title (sticky, so it stays put while the form scrolls)
+  // means the block actions are always exactly where you look first.
+  const head = document.createElement('div');
+  head.className = 'inspector-head';
+  head.appendChild(title);
+  head.appendChild(blockActions());
+  body.appendChild(head);
 
   for (const field of fieldsFor(block)) {
     body.appendChild(renderField(block, field));
   }
+}
 
+/** Duplicate / Delete, for whichever block is selected. */
+function blockActions() {
   const actions = document.createElement('div');
-  actions.style.cssText = 'display:flex;gap:6px;margin-top:16px;padding-top:10px;border-top:1px solid var(--line)';
+  actions.className = 'inspector-actions';
 
   const dup = document.createElement('button');
   dup.className = 'btn tiny';
@@ -405,12 +448,12 @@ function renderInspector() {
 
   const del = document.createElement('button');
   del.className = 'btn tiny';
-  del.textContent = 'Delete';
+  del.textContent = '🗑 Delete block';
   del.style.color = 'var(--error)';
   del.onclick = () => deleteBlock();
 
   actions.append(dup, del);
-  body.appendChild(actions);
+  return actions;
 }
 
 /**
@@ -1098,7 +1141,50 @@ function spritePicker(data) {
   if (chars.length === 0) {
     return input(null, 'sprite', 'Character', 'cupa', 'No sprites found in assets/. Free text for now.');
   }
-  return selectEl(data, 'sprite', chars.map((c) => ({ value: c, label: c })));
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;gap:4px;align-items:center';
+
+  const select = document.createElement('select');
+  for (const name of chars) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+  select.value = data.sprite ?? chars[0] ?? '';
+  select.style.flex = '1 1 auto';
+  select.style.minWidth = '0';
+  select.onchange = () => {
+    data.sprite = select.value;
+    // The outfit and expression lists belong to the character that was just
+    // picked, so the rest of the form has to be rebuilt around it.
+    commit();
+    renderInspector();
+  };
+
+  // Deleting the character's whole sprite folder from here: it is the one place
+  // the mistake is visible ("this character has no images"), so the fix belongs
+  // next to it rather than four clicks away in the asset window.
+  const del = document.createElement('button');
+  del.className = 'btn tiny';
+  del.textContent = '🗑';
+  del.title = 'Delete this character\'s sprite folder';
+  del.style.color = 'var(--error)';
+  del.onclick = async () => {
+    const character = data.sprite || select.value;
+    if (!character) return;
+    const path = `images/characters/${character}`;
+    if (!confirm(`Delete every sprite for "${character}"?\n\n${path}\n\nThis removes the folder from disk and cannot be undone.`)) return;
+    try {
+      await deleteAssetPath(path);
+    } catch (err) {
+      alert(String(err.message ?? err));
+    }
+  };
+
+  wrap.append(select, del);
+  return wrapField('Character', wrap, 'The 🗑 deletes this character\'s images from the project.');
 }
 
 function labelPicker(data, key) {
@@ -1349,6 +1435,7 @@ function setStatus(which, text, level = '') {
 
 function wireChrome() {
   $('btn-new').onclick = newProject;
+  $('btn-assets').onclick = () => openAssets();
   $('btn-compile').onclick = validate;
   $('btn-export').onclick = exportPack;
   $('btn-play').onclick = play;

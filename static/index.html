@@ -28,6 +28,7 @@
     <button class="btn" id="btn-delete" title="Delete current project">Delete</button>
     <button class="btn" id="btn-import" title="Import a .hikarin.zip project bundle">Import</button>
     <input type="file" id="file-import" accept=".zip" hidden>
+    <button class="btn" id="btn-assets" disabled title="Add images, characters and sounds">🎨 Assets</button>
     <button class="btn" id="btn-save" title="Save (Ctrl+S)">💾 Save</button>
     <button class="btn primary" id="btn-play" disabled title="Test this scene">▶ Play</button>
     <select id="export-format" class="select" title="Export format">
@@ -109,6 +110,34 @@
       <button class="btn tiny ghost" id="picker-close">✕</button>
     </div>
     <div class="picker-body" id="picker-body"></div>
+  </div>
+</div>
+
+<!-- ── ASSET MANAGER (modal) ───────────────────────────────────────── -->
+<div class="modal-backdrop" id="assets-backdrop" hidden>
+  <div class="modal assets-modal">
+    <div class="modal-head">
+      <span>Assets — <span id="assets-project">—</span></span>
+      <div class="modal-head-actions">
+        <button class="btn tiny ghost" id="assets-refresh" title="Re-read the folders on disk">↻</button>
+        <button class="btn tiny ghost" id="assets-close" title="Close (Esc)">✕</button>
+      </div>
+    </div>
+
+    <div class="asset-tabs" id="asset-tabs"></div>
+
+    <div class="asset-drop" id="asset-drop">
+      <div class="asset-drop-text">Drop images or audio here → <b id="asset-drop-target">—</b></div>
+      <div class="asset-drop-row">
+        <select id="asset-target" title="Where uploads land"></select>
+        <button class="btn tiny" id="asset-browse">Choose files…</button>
+        <input type="file" id="asset-file" multiple hidden>
+      </div>
+    </div>
+
+    <div class="assets-body" id="assets-body"></div>
+    <div class="assets-foot" id="assets-foot"></div>
+    <div class="assets-status" id="assets-status"></div>
   </div>
 </div>
 
