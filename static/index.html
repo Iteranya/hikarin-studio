@@ -53,16 +53,16 @@
   </aside>
 
   <!-- CENTRE: tabs + block list -->
-  <section class="pane centre">
+  <section class="pane centre" id="centre">
     <div class="tabs" id="tabs">
       <!-- filled by studio.js -->
     </div>
 
-    <div class="blocklist" id="blocklist">
-      <div class="empty-state" id="empty-state">
-        <p class="empty-title">No story open</p>
-        <p class="empty-hint">Open a folder, or press <b>New</b> to start one.</p>
-      </div>
+    <div class="blocklist" id="blocklist"></div>
+
+    <div class="empty-state" id="empty-state">
+      <p class="empty-title">No story open</p>
+      <p class="empty-hint">Open a folder, or press <b>New</b> to start one.</p>
     </div>
 
     <div class="add-block" id="add-block" hidden>
@@ -91,6 +91,14 @@
   </aside>
 
 </main>
+
+<!-- ── MOBILE PANE NAV (visible ≤900px only) ───────────────────────── -->
+<nav class="mobile-nav" id="mobile-nav" aria-label="Pane navigation">
+  <button class="mobile-nav-btn" data-pane="palette">🧩 Blocks</button>
+  <button class="mobile-nav-btn active" data-pane="centre">📝 Editor</button>
+  <button class="mobile-nav-btn" data-pane="inspector">🔧 Inspector</button>
+  <button class="mobile-nav-btn" data-pane="outline">📑 Outline</button>
+</nav>
 
 <!-- ── STATUS BAR ──────────────────────────────────────────────────── -->
 <footer class="statusbar">

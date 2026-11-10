@@ -28,6 +28,40 @@ async function boot() {
   renderPalette();
   await refreshProjectList();
   wireChrome();
+  wireMobileNav();
+}
+
+// ── mobile pane switching ───────────────────────────────────────────────────
+// On ≤900px the four panes are stacked and only one is visible; the bottom
+// nav picks which. On desktop the nav is display:none and this is inert.
+
+const MOBILE_PANES = ['palette', 'centre', 'inspector', 'outline'];
+
+function showMobilePane(name) {
+  for (const p of MOBILE_PANES) {
+    const el = p === 'centre' ? document.getElementById('centre') : document.getElementById(p);
+    el?.classList.toggle('mobile-active', p === name);
+  }
+  document.querySelectorAll('#mobile-nav .mobile-nav-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.pane === name);
+  });
+}
+
+function wireMobileNav() {
+  const nav = document.getElementById('mobile-nav');
+  if (!nav) return;
+  nav.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mobile-nav-btn');
+    if (btn) showMobilePane(btn.dataset.pane);
+  });
+  // Default visible pane on small screens.
+  const mq = window.matchMedia('(max-width: 900px)');
+  if (mq.matches) showMobilePane('centre');
+  mq.addEventListener?.('change', (e) => { if (e.matches) showMobilePane('centre'); });
+}
+
+function isMobileLayout() {
+  return window.matchMedia('(max-width: 900px)').matches;
 }
 
 async function refreshProjectList() {
@@ -325,6 +359,7 @@ function selectBlock(index) {
   state.selected = { file: state.activeFile, index };
   renderBlocks();
   renderInspector();
+  if (isMobileLayout()) showMobilePane('inspector');
 }
 
 function addBlock(kind) {

@@ -442,3 +442,107 @@ html, body {
 }
 
 .picker-item:hover { border-color: var(--accent-dim); color: var(--text); }
+
+/* ── MOBILE NAV (hidden on desktop) ─────────────────────────────────── */
+
+.mobile-nav { display: none; }
+
+/* ── RESPONSIVE: ≤ 900px ────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  html, body { overflow: hidden; }
+
+  /* Top bar: two rows, horizontally scrollable actions */
+  .topbar {
+    height: auto;
+    min-height: 44px;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 8px;
+    row-gap: 4px;
+  }
+  .brand-name { display: none; }
+  .project-info { order: 2; flex: 1 1 auto; }
+  .topbar-actions {
+    order: 3;
+    flex: 1 1 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+  .topbar-actions::-webkit-scrollbar { display: none; }
+  .topbar-actions .btn,
+  .topbar-actions .select { flex: 0 0 auto; }
+
+  /* Workspace: one pane at a time; body becomes a flex column
+     so the variable-height topbar just works */
+  body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+  .topbar { flex: 0 0 auto; }
+  .workspace {
+    display: block;
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .statusbar { flex: 0 0 auto; }
+
+  .pane {
+    display: none;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-right: none;
+  }
+  .pane.mobile-active { display: flex; }
+
+  /* Bigger touch targets */
+  .palette-item { padding: 9px 10px; font-size: 13px; }
+  .block { padding: 9px 10px; margin-bottom: 4px; }
+  .block-text { font-size: 13px; white-space: normal; }
+  .tab { padding: 10px 14px; font-size: 13px; }
+  .outline-label { padding: 8px 8px 8px 16px; }
+  .field input, .field textarea, .field select { font-size: 16px; padding: 8px; }
+  .btn { padding: 8px 12px; }
+
+  /* Status bar: drop the noise */
+  .statusbar { gap: 8px; padding: 0 8px; overflow-x: auto; white-space: nowrap; }
+  #status-labels { display: none; }
+
+  /* Modal: single column picker */
+  .picker-body { grid-template-columns: 1fr; }
+  .modal { width: min(520px, 94vw); max-height: 80vh; }
+
+  /* Bottom pane nav */
+  .mobile-nav {
+    display: flex;
+    flex: 0 0 auto;
+    height: 52px;
+    background: var(--bg-pane);
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .mobile-nav-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-top: 2px solid transparent;
+    color: var(--text-faint);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 4px 2px;
+  }
+  .mobile-nav-btn.active {
+    color: var(--accent);
+    border-top-color: var(--accent);
+    background: var(--bg-raise);
+  }
+}
+
+@media (max-width: 900px) and (max-height: 480px) {
+  /* Landscape phones: slimmer chrome */
+  .mobile-nav { height: 44px; }
+}
