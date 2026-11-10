@@ -340,6 +340,9 @@ function summarise(block) {
       return `<b>${esc(d.sprite || '?')}</b> <span class="block-sub">${esc(d.outfit || 'default')}/${esc(d.expression || 'normal')} · ${esc(String(pos).toLowerCase())}</span>`;
     }
     case 'hide':
+      if (d.mode === 'box') {
+        return `<span class="block-sub">image box</span> <b>${esc(d.folder || 'asset')}/${esc(d.image || '?')}</b>`;
+      }
       return `<b>${esc(d.sprite || '?')}</b>`;
     case 'background':
       return `<span class="block-sub">${esc(d.background || 'none')}</span>`;
@@ -415,6 +418,8 @@ function defaultData(kind) {
       return { choices: [{ label: '', display: '' }] };
     case 'show':
       return { sprite: '', expression: 'normal', position: 'CENTER' };
+    case 'hide':
+      return { mode: 'character' };
     case 'if':
       return { scope: '', var: '', condition: 'equal', value: '', _target: '' };
     case 'setVar':
@@ -573,9 +578,21 @@ function fieldsFor(block) {
       break;
     }
 
-    case 'hide':
-      all.push({ key: 'sprite', label: 'Character', render: () => characterSelect(d, 'sprite') });
+    case 'hide': {
+      // Show can put two kinds of thing on the stage, so Hide has to be able to
+      // take two kinds off it. Same switch, same picks, but without the
+      // placement grid: you are removing something, not positioning it.
+      const isBox = d.mode === 'box';
+      all.push({ key: 'mode', label: 'Hiding', render: () => hideModeSwitch(d) });
+
+      if (isBox) {
+        all.push({ key: 'folder', label: 'Folder', render: () => folderPicker(d) });
+        all.push({ key: 'image', label: 'Image', render: () => boxImagePicker(d) });
+      } else {
+        all.push({ key: 'sprite', label: 'Character', render: () => characterSelect(d, 'sprite') });
+      }
       break;
+    }
 
     case 'background':
       all.push({ key: 'background', label: 'Image', render: () => backgroundPicker(d) });
@@ -768,7 +785,7 @@ function numberInput(data, key, min = 1) {
   return wrapField('Count', el);
 }
 
-function selectEl(data, key, options) {
+function selectEl(data, key, options, label = key) {
   const el = document.createElement('select');
   for (const opt of options) {
     const option = document.createElement('option');
@@ -782,7 +799,7 @@ function selectEl(data, key, options) {
     commit();
     renderInspector();
   };
-  return wrapField(key, el);
+  return wrapField(label, el);
 }
 
 function conditionPicker(data) {
@@ -1142,7 +1159,7 @@ function folderPicker(d) {
       'No image folders yet. Create images/<name>/ and drop images in it.');
   }
 
-  return selectEl(d, 'folder', folders.map((f) => ({ value: f, label: f })));
+  return selectEl(d, 'folder', folders.map((f) => ({ value: f, label: f })), 'Folder');
 }
 
 /** Images inside the chosen folder. */
@@ -1172,6 +1189,41 @@ function boxImagePicker(d) {
     commit();
   };
   return wrapField('Image', el);
+}
+
+/**
+ * Character or image box — the Hide block's half of the Show switch.
+ *
+ * Deliberately separate from modeSwitch(): that one carries the six-number
+ * placement defaults a Show needs when it flips to a box, and a Hide has no
+ * placement. Sharing it would write layout data onto a block that removes
+ * things.
+ */
+function hideModeSwitch(d) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;gap:4px';
+
+  for (const [value, label] of [['character', 'Character'], ['box', 'Image box']]) {
+    const btn = document.createElement('button');
+    btn.className = 'btn tiny';
+    btn.textContent = label;
+    btn.style.flex = '1';
+    if ((d.mode || 'character') === value) {
+      btn.style.borderColor = 'var(--accent)';
+      btn.style.color = 'var(--accent)';
+    }
+    btn.onclick = () => {
+      d.mode = value;
+      if (value === 'box') {
+        d.folder ??= 'asset';
+        d.image ??= '';
+      }
+      commit();
+      renderInspector();
+    };
+    wrap.appendChild(btn);
+  }
+  return wrapField('Hiding', wrap);
 }
 
 /**

@@ -393,3 +393,37 @@ def test_next_checkpoint_crosses_files_too():
     r = compile_project(PROJECT, files, ["main.story", "night.story"])
     nxt = next(a for a in r.actions if a["type"] == "next")
     assert nxt["label"] == "start"
+
+
+def test_hide_targets_the_character_id():
+    files = {"main.story": [
+        block("label", name="start"),
+        block("hide", sprite="cupa"),
+        block("end"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    hide = next(a for a in r.actions if a["type"] == "remove_sprite")
+    assert hide["sprite"] == "cupa"
+
+
+def test_hide_of_an_image_box_removes_the_image_name_not_the_folder():
+    """A box is show_custom("asset", "old-dsl", ...) and the *image name* is its
+    sprite slot, so remove_sprite has to name that. Emitting the folder would
+    remove a sprite called "asset", which is nothing."""
+    files = {"main.story": [
+        block("label", name="start"),
+        block("show", mode="box", folder="asset", image="old-dsl"),
+        block("hide", mode="box", folder="asset", image="old-dsl"),
+        block("end"),
+    ]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    show = next(a for a in r.actions if a["type"] == "show_sprite")
+    hide = next(a for a in r.actions if a["type"] == "remove_sprite")
+    assert show["sprite"] == "old-dsl"
+    assert hide["sprite"] == show["sprite"], "hide must remove the slot show created"
+
+
+def test_hide_without_a_target_still_falls_back():
+    files = {"main.story": [block("label", name="start"), block("hide"), block("end")]}
+    r = compile_project(PROJECT, files, ["main.story"])
+    assert next(a for a in r.actions if a["type"] == "remove_sprite")["sprite"] == "character"

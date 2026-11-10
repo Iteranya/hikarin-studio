@@ -215,7 +215,19 @@ def _to_action_show(d: dict) -> dict:
 
 
 def _to_action_hide(d: dict) -> dict:
-    return {"type": "remove_sprite", "action": "remove", "sprite": d.get("sprite") or "character"}
+    """remove_sprite for whatever Show put on the stage.
+
+    A character is shown as show_custom(<id>, ...) and its slot is the character
+    id. An image box is shown as show_custom("asset", "old-dsl", ...) and its
+    slot is the *image name* — see _to_action_show, where the box's file name
+    becomes the sprite. So hiding a box removes the image name, not the folder;
+    emitting the folder would look up a sprite called "asset" and remove nothing.
+    """
+    if d.get("mode") == "box":
+        sprite = d.get("image") or d.get("sprite") or "character"
+    else:
+        sprite = d.get("sprite") or "character"
+    return {"type": "remove_sprite", "action": "remove", "sprite": sprite}
 
 
 def _to_action_background(d: dict) -> dict:
