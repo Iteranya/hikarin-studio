@@ -574,7 +574,7 @@ function fieldsFor(block) {
     }
 
     case 'hide':
-      all.push(text('sprite', 'Character', 'cupa'));
+      all.push({ key: 'sprite', label: 'Character', render: () => characterSelect(d, 'sprite') });
       break;
 
     case 'background':
@@ -1172,6 +1172,59 @@ function boxImagePicker(d) {
     commit();
   };
   return wrapField('Image', el);
+}
+
+/**
+ * A dropdown of the characters that actually have sprites on disk.
+ *
+ * Used by Hide (and by Show, which wraps it to add its delete button). A
+ * free-text field here was a trap: a typo in a character id hides nothing and
+ * reports nothing, because the engine just looks up a sprite that does not
+ * exist. Falls back to text only when the project has no sprites at all, so a
+ * project mid-setup is still authorable.
+ */
+function characterSelect(data, key) {
+  const chars = Object.keys(state.project.assets?.characters ?? {});
+
+  if (chars.length === 0) {
+    return input(null, key, 'Character', 'cupa', 'No sprites found in assets/. Free text for now.');
+  }
+
+  const el = document.createElement('select');
+  for (const name of chars) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    el.appendChild(option);
+  }
+
+  // No value yet: show an explicit empty choice rather than preselecting the
+  // first character. A dropdown that displays "andr" while the block stores
+  // nothing is a lie the compile then turns into "hide the default sprite".
+  if (!data[key]) {
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = '— pick a character —';
+    el.insertBefore(blank, el.firstChild);
+  }
+
+  // A value that is not on disk (a hand-typed id, or sprites deleted since) is
+  // kept as a selected option rather than silently snapping to the first
+  // character — otherwise opening the block would rewrite what it says.
+  if (data[key] && !chars.includes(data[key])) {
+    const stale = document.createElement('option');
+    stale.value = data[key];
+    stale.textContent = `${data[key]} (not on disk)`;
+    el.appendChild(stale);
+  }
+
+  el.value = data[key] ?? '';
+  el.onchange = () => {
+    if (el.value) data[key] = el.value;
+    else delete data[key];
+    commit();
+  };
+  return wrapField('Character', el);
 }
 
 function spritePicker(data) {
