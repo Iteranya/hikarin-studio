@@ -8,6 +8,8 @@
  * tabs and blocks freely without breaking anything.
  */
 
+import { initAssets, openAssets, deleteAssetPath } from './assets.js';
+
 const $ = (id) => document.getElementById(id);
 
 // ── state ───────────────────────────────────────────────────────────────────
@@ -21,11 +23,39 @@ const state = {
   lastCompile: null,
 };
 
+// ── autosave ────────────────────────────────────────────────────────────────
+//
+// Everything writes itself. There is no "remember to save" step to forget, and
+// no amber chip to lose an afternoon to.
+//
+// The shape is write-behind: an edit marks the project dirty and starts a timer;
+// further edits restart it. When it fires, the whole project goes up in one PUT,
+// because that is the endpoint that exists and a story is small.
+//
+// Two rules keep it honest:
+//   * one PUT at a time. A second save while the first is open sets `queued`
+//     and the in-flight one re-schedules when it lands — two overlapping writes
+//     racing on the same file is how a save silently reverts an edit.
+//   * a save is flushed before anything that reads the files from disk (project
+//     switch, preview) so the disk and the screen never disagree.
+const AUTOSAVE_DELAY = 900;      // ms of idle after the last edit
+
+const autosave = {
+  timer: null,
+  inFlight: null,
+  queued: false,
+  retry: null,
+};
+
 // ── boot ────────────────────────────────────────────────────────────────────
 
 async function boot() {
   state.meta = await fetch('/api/meta').then((r) => r.json());
   renderPalette();
+  // The asset window reads and writes media folders directly, so it needs the
+  // live state object and a way to tell the editor that a picker's options
+  // changed underneath it.
+  initAssets({ state, onChange: onAssetsChanged });
   await refreshProjectList();
   wireChrome();
   wireMobileNav();
@@ -64,6 +94,13 @@ function isMobileLayout() {
   return window.matchMedia('(max-width: 900px)').matches;
 }
 
+/** Re-render whatever the asset window may have just changed. */
+function onAssetsChanged() {
+  if (!state.project) return;
+  renderInspector();
+  renderBlocks();
+}
+
 async function refreshProjectList() {
   const projects = await fetch('/api/projects').then((r) => r.json());
   const sel = document.getElementById('project-select');
@@ -88,6 +125,10 @@ async function refreshProjectList() {
 }
 
 async function openProject(slug) {
+  // Whatever is on screen has to be on disk before the next project's files are
+  // read, or an autosave can land on the project you just left.
+  if (state.project) await flushAutosave();
+
   const data = await fetch(`/api/projects/${slug}`).then((r) => r.json());
   state.project = data;
   const sel = document.getElementById('project-select'); if (sel) sel.value = slug;
@@ -100,8 +141,19 @@ async function openProject(slug) {
   $('btn-play').disabled = false;
   $('btn-export').disabled = false;
   $('btn-compile').disabled = false;
-  $('empty-state').hidden = true;
-  $('add-block').hidden = false;
+  $('btn-assets').disabled = false;
+
+  // #empty-state lives *inside* #blocklist in index.html, and renderBlocks()
+  // wipes that list on every render — so from the second openProject() onwards
+  // the element is gone. Touching it unguarded threw a TypeError right here,
+  // halfway through the load, which aborted renderTabs/renderBlocks and left
+  // the previous project's blocks on screen. That is the whole "switching
+  // projects does nothing" bug: the fetch succeeded, the render never ran.
+  const emptyState = $('empty-state');
+  if (emptyState) emptyState.hidden = true;
+
+  const addBlock = $('add-block');
+  if (addBlock) addBlock.hidden = false;
 
   renderTabs();
   renderBlocks();
@@ -275,9 +327,22 @@ function renderBlocks() {
     el.innerHTML = `
       <span class="block-icon">${ICONS[block.kind] ?? '•'}</span>
       <span class="block-text">${summarise(block)}</span>
+      <button class="block-del" title="Delete this block">✕</button>
     `;
 
     el.onclick = () => selectBlock(index);
+
+    // Delete straight from the row. The inspector has the same button, but
+    // needing to select a block before you can remove it is a pointless step —
+    // and for the Show block, whose form is tall, the inspector button was
+    // often scrolled out of sight, which read as "there is no delete here".
+    const del = el.querySelector('.block-del');
+    del.onclick = (event) => {
+      event.stopPropagation();
+      state.selected = { file: state.activeFile, index };
+      deleteBlock();
+    };
+
     list.appendChild(el);
   });
 }
@@ -309,6 +374,9 @@ function summarise(block) {
       return `<b>${esc(d.sprite || '?')}</b> <span class="block-sub">${esc(d.outfit || 'default')}/${esc(d.expression || 'normal')} · ${esc(String(pos).toLowerCase())}</span>`;
     }
     case 'hide':
+      if (d.mode === 'box') {
+        return `<span class="block-sub">image box</span> <b>${esc(d.folder || 'asset')}/${esc(d.image || '?')}</b>`;
+      }
       return `<b>${esc(d.sprite || '?')}</b>`;
     case 'background':
       return `<span class="block-sub">${esc(d.background || 'none')}</span>`;
@@ -385,6 +453,8 @@ function defaultData(kind) {
       return { choices: [{ label: '', display: '' }] };
     case 'show':
       return { sprite: '', expression: 'normal', position: 'CENTER' };
+    case 'hide':
+      return { mode: 'character' };
     case 'if':
       return { scope: '', var: '', condition: 'equal', value: '', _target: '' };
     case 'setVar':
@@ -422,16 +492,32 @@ function renderInspector() {
   const title = document.createElement('div');
   title.className = 'inspector-title';
   title.innerHTML = `<span>${ICONS[block.kind] ?? '•'}</span>${TITLES[block.kind] ?? block.kind}`;
-  body.appendChild(title);
 
   block.data ??= {};
+
+  // The Duplicate/Delete row goes at the TOP of the panel, not the bottom.
+  //
+  // It used to be appended last, after every field. For a Show block that means
+  // after the mode switch, the character picker, the outfit and expression
+  // pickers and the whole placement grid — a screen and a half of scrolling
+  // below where you clicked, which reads as "this block has no delete button".
+  // Pinning it under the title (sticky, so it stays put while the form scrolls)
+  // means the block actions are always exactly where you look first.
+  const head = document.createElement('div');
+  head.className = 'inspector-head';
+  head.appendChild(title);
+  head.appendChild(blockActions());
+  body.appendChild(head);
 
   for (const field of fieldsFor(block)) {
     body.appendChild(renderField(block, field));
   }
+}
 
+/** Duplicate / Delete, for whichever block is selected. */
+function blockActions() {
   const actions = document.createElement('div');
-  actions.style.cssText = 'display:flex;gap:6px;margin-top:16px;padding-top:10px;border-top:1px solid var(--line)';
+  actions.className = 'inspector-actions';
 
   const dup = document.createElement('button');
   dup.className = 'btn tiny';
@@ -440,12 +526,12 @@ function renderInspector() {
 
   const del = document.createElement('button');
   del.className = 'btn tiny';
-  del.textContent = 'Delete';
+  del.textContent = '🗑 Delete block';
   del.style.color = 'var(--error)';
   del.onclick = () => deleteBlock();
 
   actions.append(dup, del);
-  body.appendChild(actions);
+  return actions;
 }
 
 /**
@@ -527,9 +613,21 @@ function fieldsFor(block) {
       break;
     }
 
-    case 'hide':
-      all.push(text('sprite', 'Character', 'cupa'));
+    case 'hide': {
+      // Show can put two kinds of thing on the stage, so Hide has to be able to
+      // take two kinds off it. Same switch, same picks, but without the
+      // placement grid: you are removing something, not positioning it.
+      const isBox = d.mode === 'box';
+      all.push({ key: 'mode', label: 'Hiding', render: () => hideModeSwitch(d) });
+
+      if (isBox) {
+        all.push({ key: 'folder', label: 'Folder', render: () => folderPicker(d) });
+        all.push({ key: 'image', label: 'Image', render: () => boxImagePicker(d) });
+      } else {
+        all.push({ key: 'sprite', label: 'Character', render: () => characterSelect(d, 'sprite') });
+      }
       break;
+    }
 
     case 'background':
       all.push({ key: 'background', label: 'Image', render: () => backgroundPicker(d) });
@@ -722,7 +820,7 @@ function numberInput(data, key, min = 1) {
   return wrapField('Count', el);
 }
 
-function selectEl(data, key, options) {
+function selectEl(data, key, options, label = key) {
   const el = document.createElement('select');
   for (const opt of options) {
     const option = document.createElement('option');
@@ -736,7 +834,7 @@ function selectEl(data, key, options) {
     commit();
     renderInspector();
   };
-  return wrapField(key, el);
+  return wrapField(label, el);
 }
 
 function conditionPicker(data) {
@@ -1096,7 +1194,7 @@ function folderPicker(d) {
       'No image folders yet. Create images/<name>/ and drop images in it.');
   }
 
-  return selectEl(d, 'folder', folders.map((f) => ({ value: f, label: f })));
+  return selectEl(d, 'folder', folders.map((f) => ({ value: f, label: f })), 'Folder');
 }
 
 /** Images inside the chosen folder. */
@@ -1128,12 +1226,143 @@ function boxImagePicker(d) {
   return wrapField('Image', el);
 }
 
+/**
+ * Character or image box — the Hide block's half of the Show switch.
+ *
+ * Deliberately separate from modeSwitch(): that one carries the six-number
+ * placement defaults a Show needs when it flips to a box, and a Hide has no
+ * placement. Sharing it would write layout data onto a block that removes
+ * things.
+ */
+function hideModeSwitch(d) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;gap:4px';
+
+  for (const [value, label] of [['character', 'Character'], ['box', 'Image box']]) {
+    const btn = document.createElement('button');
+    btn.className = 'btn tiny';
+    btn.textContent = label;
+    btn.style.flex = '1';
+    if ((d.mode || 'character') === value) {
+      btn.style.borderColor = 'var(--accent)';
+      btn.style.color = 'var(--accent)';
+    }
+    btn.onclick = () => {
+      d.mode = value;
+      if (value === 'box') {
+        d.folder ??= 'asset';
+        d.image ??= '';
+      }
+      commit();
+      renderInspector();
+    };
+    wrap.appendChild(btn);
+  }
+  return wrapField('Hiding', wrap);
+}
+
+/**
+ * A dropdown of the characters that actually have sprites on disk.
+ *
+ * Used by Hide (and by Show, which wraps it to add its delete button). A
+ * free-text field here was a trap: a typo in a character id hides nothing and
+ * reports nothing, because the engine just looks up a sprite that does not
+ * exist. Falls back to text only when the project has no sprites at all, so a
+ * project mid-setup is still authorable.
+ */
+function characterSelect(data, key) {
+  const chars = Object.keys(state.project.assets?.characters ?? {});
+
+  if (chars.length === 0) {
+    return input(null, key, 'Character', 'cupa', 'No sprites found in assets/. Free text for now.');
+  }
+
+  const el = document.createElement('select');
+  for (const name of chars) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    el.appendChild(option);
+  }
+
+  // No value yet: show an explicit empty choice rather than preselecting the
+  // first character. A dropdown that displays "andr" while the block stores
+  // nothing is a lie the compile then turns into "hide the default sprite".
+  if (!data[key]) {
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = '— pick a character —';
+    el.insertBefore(blank, el.firstChild);
+  }
+
+  // A value that is not on disk (a hand-typed id, or sprites deleted since) is
+  // kept as a selected option rather than silently snapping to the first
+  // character — otherwise opening the block would rewrite what it says.
+  if (data[key] && !chars.includes(data[key])) {
+    const stale = document.createElement('option');
+    stale.value = data[key];
+    stale.textContent = `${data[key]} (not on disk)`;
+    el.appendChild(stale);
+  }
+
+  el.value = data[key] ?? '';
+  el.onchange = () => {
+    if (el.value) data[key] = el.value;
+    else delete data[key];
+    commit();
+  };
+  return wrapField('Character', el);
+}
+
 function spritePicker(data) {
   const chars = Object.keys(state.project.assets?.characters ?? {});
   if (chars.length === 0) {
     return input(null, 'sprite', 'Character', 'cupa', 'No sprites found in assets/. Free text for now.');
   }
-  return selectEl(data, 'sprite', chars.map((c) => ({ value: c, label: c })));
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;gap:4px;align-items:center';
+
+  const select = document.createElement('select');
+  for (const name of chars) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+  select.value = data.sprite ?? chars[0] ?? '';
+  select.style.flex = '1 1 auto';
+  select.style.minWidth = '0';
+  select.onchange = () => {
+    data.sprite = select.value;
+    // The outfit and expression lists belong to the character that was just
+    // picked, so the rest of the form has to be rebuilt around it.
+    commit();
+    renderInspector();
+  };
+
+  // Deleting the character's whole sprite folder from here: it is the one place
+  // the mistake is visible ("this character has no images"), so the fix belongs
+  // next to it rather than four clicks away in the asset window.
+  const del = document.createElement('button');
+  del.className = 'btn tiny';
+  del.textContent = '🗑';
+  del.title = 'Delete this character\'s sprite folder';
+  del.style.color = 'var(--error)';
+  del.onclick = async () => {
+    const character = data.sprite || select.value;
+    if (!character) return;
+    const path = `images/characters/${character}`;
+    if (!confirm(`Delete every sprite for "${character}"?\n\n${path}\n\nThis removes the folder from disk and cannot be undone.`)) return;
+    try {
+      await deleteAssetPath(path);
+    } catch (err) {
+      alert(String(err.message ?? err));
+    }
+  };
+
+  wrap.append(select, del);
+  return wrapField('Character', wrap, 'The 🗑 deletes this character\'s images from the project.');
 }
 
 function labelPicker(data, key) {
@@ -1361,6 +1590,26 @@ function markDirty() {
   state.dirty = true;
   $('project-name').classList.add('dirty');
   renderTabs();
+  scheduleAutosave();
+}
+
+/** Start (or restart) the idle timer that writes the project to disk. */
+function scheduleAutosave(delay = AUTOSAVE_DELAY) {
+  if (!state.project) return;
+  clearTimeout(autosave.timer);
+  autosave.timer = setTimeout(() => {
+    autosave.timer = null;
+    save({ silent: true });
+  }, delay);
+}
+
+/** Write now if anything is pending. Used before switching or previewing. */
+async function flushAutosave() {
+  if (autosave.timer) {
+    clearTimeout(autosave.timer);
+    autosave.timer = null;
+  }
+  if (state.dirty || autosave.inFlight) await save({ silent: true });
 }
 
 function updateCounts() {
@@ -1384,16 +1633,33 @@ function setStatus(which, text, level = '') {
 
 function wireChrome() {
   $('btn-new').onclick = newProject;
+  $('btn-assets').onclick = () => openAssets();
   $('btn-compile').onclick = validate;
   $('btn-export').onclick = exportPack;
   $('btn-play').onclick = play;
-  $('btn-save').onclick = save;
+  $('btn-save').onclick = () => save();
   $('btn-duplicate').onclick = duplicateProject;
   $('btn-rename').onclick = renameProject;
   $('btn-delete').onclick = deleteProject;
   $('btn-import').onclick = () => $('file-import').click();
   document.getElementById('project-select').onchange = (e) => { if (e.target.value) openProject(e.target.value); };
   document.getElementById('file-import').onchange = importProjectFile;
+
+  // Last line of defence: the tab is closing mid-edit, before the debounce
+  // fired. `keepalive` lets the request outlive the page. Browsers cap such
+  // bodies at 64 KB, so a big project simply loses the race — the debounce
+  // covers all but the last ~second of typing anyway.
+  window.addEventListener('beforeunload', () => {
+    if (!state.project || !state.dirty || autosave.inFlight) return;
+    const blob = new Blob([JSON.stringify(saveBody())], { type: 'application/json' });
+    if (blob.size > 60000) return;
+    fetch(`/api/projects/${state.project.slug}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: blob,
+      keepalive: true,
+    }).catch(() => {});
+  });
 
   // Ctrl+S saves, Ctrl+Enter validates.
   document.addEventListener('keydown', (e) => {
@@ -1430,38 +1696,96 @@ async function newProject() {
   await openProject(slug);
 }
 
-async function save() {
-  if (!state.project) return;
+/** The exact payload the server expects, built from live state. */
+function saveBody(project = state.project) {
+  const body = { meta: project.meta, files: {} };
+  for (const file of project.meta.files) {
+    body.files[file] = project.files[file] ?? [];
+  }
+  return body;
+}
 
-  const body = {
-    meta: state.project.meta,
-    files: {},
-  };
-  for (const file of state.project.meta.files) {
-    body.files[file] = state.project.files[file] ?? [];
+/**
+ * Write the project to disk.
+ *
+ * `silent` is the autosave path: a failure shows in the status bar and retries
+ * instead of throwing a modal in your face mid-sentence. A manual save (button,
+ * Ctrl+S) still complains loudly, because you asked for it.
+ */
+async function save({ silent = false } = {}) {
+  if (!state.project) return false;
+
+  if (autosave.timer) {
+    clearTimeout(autosave.timer);
+    autosave.timer = null;
   }
 
-  const res = await fetch(`/api/projects/${state.project.slug}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const err = await res.json();
-    alert(err.detail || 'Save failed.');
-    return;
+  // One write at a time. Queue and let the in-flight save re-schedule, so two
+  // PUTs cannot race on the same files and undo each other.
+  if (autosave.inFlight) {
+    autosave.queued = true;
+    return autosave.inFlight;
   }
 
-  state.dirty = false;
-  $('project-name').classList.remove('dirty');
-  renderTabs();
-  setStatus('compile', 'saved', 'ok');
-  setTimeout(() => state.lastCompile && setStatus('compile', state.lastCompile), 2000);
+  const project = state.project;
+  const body = saveBody(project);
+
+  autosave.inFlight = (async () => {
+    try {
+      const res = await fetch(`/api/projects/${project.slug}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Save failed (${res.status})`);
+      }
+
+      // Only clear the flag if the project on screen is still the one written —
+      // a save finishing after a switch must not mark the new project clean.
+      if (state.project === project) {
+        state.dirty = false;
+        $('project-name').classList.remove('dirty');
+        renderTabs();
+        setStatus('compile', silent ? 'autosaved' : 'saved', 'ok');
+        if (state.lastCompile) {
+          setTimeout(() => {
+            if (!state.dirty) setStatus('compile', state.lastCompile);
+          }, 2500);
+        }
+      }
+      return true;
+    } catch (err) {
+      const message = String(err.message ?? err);
+      if (state.project === project) {
+        setStatus('compile', `save failed — ${message}`, 'error');
+        if (silent) {
+          clearTimeout(autosave.retry);
+          autosave.retry = setTimeout(() => scheduleAutosave(0), 4000);
+        } else {
+          alert(message);
+        }
+      }
+      return false;
+    } finally {
+      autosave.inFlight = null;
+      if (autosave.queued) {
+        autosave.queued = false;
+        scheduleAutosave(0);
+      }
+    }
+  })();
+
+  return autosave.inFlight;
 }
 
 async function validate() {
   if (!state.project) return;
+  // Validate compiles the files on disk, so anything still in the debounce
+  // window would be reported one edit out of date.
+  await flushAutosave();
   setStatus('compile', 'compiling…');
 
   const res = await fetch(`/api/projects/${state.project.slug}/compile`);
@@ -1544,13 +1868,12 @@ async function importProjectFile(e) {
   await openProject(slug);
 }
 
-// The preview saves first: testing unsaved edits would be a lie, and the
-// compiler reads the files on disk.
+// The preview compiles the files on disk, so anything pending is flushed first.
 async function play() {
   if (!state.project) return;
   if (state.dirty) {
     setStatus('compile', 'saving before preview…');
-    await save();
+    await flushAutosave();
   }
   window.open(`play.html?project=${encodeURIComponent(state.project.slug)}`, '_blank');
 }

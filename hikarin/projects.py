@@ -285,71 +285,19 @@ def list_assets(path: Path) -> dict[str, Any]:
           "folders": {"asset": ["end", "void"]},
           "sounds": ["sound/teleport.ogg"],
           "music": ["music/haggstrom.ogg"],
+          # plus the tree the asset manager window drives off:
+          "characterTree", "imageFolders", "audio", "packIcon", "totals",
         }
 
     Backgrounds are reported with their folder prefix because that is how a
     script must reference them: ``asset/end.png``, not ``end.png``.
+
+    The walk itself lives in :mod:`hikarin.assets`, next to the code that adds
+    and removes the files it describes, so the two cannot drift apart.
     """
-    images = path / "images"
-    characters: dict[str, dict[str, set[str]]] = {}
-    backgrounds: list[str] = []
-    folders: dict[str, set[str]] = {}
-    sounds: list[str] = []
-    music: list[str] = []
+    from .assets import inventory
 
-    if images.is_dir():
-        for file in images.rglob("*"):
-            if not file.is_file() or file.suffix.lower() not in (".png", ".jpg", ".jpeg"):
-                continue
-            rel = file.relative_to(images).as_posix()
-            parts = rel.split("/")
-
-            if len(parts) == 1:
-                # images/pack.png is the pack icon, not a background.
-                if parts[0] != "pack.png":
-                    backgrounds.append(rel)
-                continue
-
-            if parts[0] == "characters" and len(parts) >= 4:
-                # characters/<id>/<outfit>/<emotion>.png
-                _, character, outfit, filename = parts[0], parts[1], parts[2], parts[-1]
-                characters.setdefault(character, {}).setdefault(outfit, set()).add(
-                    filename.rsplit(".", 1)[0]
-                )
-            else:
-                # asset/<background>.png and anything else folder-shaped.
-                # These double as the boxes a show_custom("asset", ...) call
-                # stretches across the screen, so they are indexed by folder as
-                # well as listed flat for the Background block.
-                backgrounds.append(rel)
-                if len(parts) >= 2:
-                    folders.setdefault(parts[0], set()).add(parts[-1].rsplit(".", 1)[0])
-
-    sounds_root = path / "sounds"
-    if sounds_root.is_dir():
-        for file in sounds_root.rglob("*"):
-            if not file.is_file() or file.suffix.lower() not in (".ogg", ".wav", ".mp3"):
-                continue
-            rel = file.relative_to(sounds_root).as_posix()
-            if rel.startswith("music/"):
-                music.append(rel)
-            else:
-                sounds.append(rel)
-
-    return {
-        "characters": {
-            char: {outfit: sorted(exprs) for outfit, exprs in sorted(outfits.items())}
-            for char, outfits in sorted(characters.items())
-        },
-        "backgrounds": sorted(backgrounds),
-        # Every folder under images/ that is not the characters tree. A box is
-        # show_custom(<folder>, <image>, ...), so any folder can hold them —
-        # "asset" is only the name the demo happened to use. Listing all of them
-        # means adding images/ui/ makes "ui" selectable with no code change.
-        "folders": {name: sorted(imgs) for name, imgs in sorted(folders.items())},
-        "sounds": sorted(sounds),
-        "music": sorted(music),
-    }
+    return inventory(path)
 
 
 # ── duplicate / rename / import ─────────────────────────────────────────────
@@ -422,4 +370,3 @@ def import_project_zip(slug: str, payload: bytes) -> dict[str, Any]:
     except ProjectError:
         shutil.rmtree(dest, ignore_errors=True)
         raise
-
