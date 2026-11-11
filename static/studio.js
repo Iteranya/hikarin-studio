@@ -152,8 +152,6 @@ async function openProject(slug) {
   const emptyState = $('empty-state');
   if (emptyState) emptyState.hidden = true;
 
-  const addBlock = $('add-block');
-  if (addBlock) addBlock.hidden = false;
 
   renderTabs();
   renderBlocks();
@@ -440,6 +438,17 @@ function addBlock(kind) {
   renderInspector();
   renderOutline();
   updateCounts();
+}
+
+// The "+ Say" button: one press creates a Say block right after the current
+// selection and drops the cursor in its text field — the travelling speed of
+// an author writing dialogue, particularly thumb-sized on mobile.
+function addSayBlock() {
+  addBlock('say');
+  if (isMobileLayout()) showMobilePane('inspector');
+  const areas = $('inspector-body').querySelectorAll('textarea');
+  const target = areas.length > 1 ? areas[1] : areas[0];
+  target?.focus();
 }
 
 function defaultData(kind) {
@@ -1642,6 +1651,7 @@ function wireChrome() {
   $('btn-rename').onclick = renameProject;
   $('btn-delete').onclick = deleteProject;
   $('btn-import').onclick = () => $('file-import').click();
+  $('btn-add-say').onclick = addSayBlock;
   document.getElementById('project-select').onchange = (e) => { if (e.target.value) openProject(e.target.value); };
   document.getElementById('file-import').onchange = importProjectFile;
 

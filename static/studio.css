@@ -261,12 +261,6 @@ html, body {
 .block-label { font-weight: 600; }
 .block-label .block-text { color: var(--accent); }
 
-.add-block {
-  flex: 0 0 auto;
-  padding: 6px 8px;
-  border-top: 1px solid var(--line);
-  background: var(--bg-pane);
-}
 
 /* ── INSPECTOR ─────────────────────────────────────────────────────── */
 
@@ -865,3 +859,6 @@ html, body {
 }
 
 .inspector-actions { display: flex; gap: 6px; }
+
+/* Inspector pane header with action */
+.pane-head-row { display: flex; justify-content: space-between; align-items: center; }
