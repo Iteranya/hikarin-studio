@@ -905,3 +905,12 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+
+/* Say block: full-width "+ Say" beneath the text field */
+.say-add-bottom {
+  width: 100%;
+  margin-top: 4px;
+  padding: 12px;
+  font-size: 14px;
+}

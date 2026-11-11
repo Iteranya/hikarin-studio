@@ -530,6 +530,18 @@ function renderInspector() {
   for (const field of fieldsFor(block)) {
     body.appendChild(renderField(block, field));
   }
+
+  // When the line you are writing is a Say, repeating the button at the FOOT
+  // of the form saves the scroll-back to the header: thumb finishes the
+  // sentence, thumb taps, next line.
+  if (block.kind === 'say') {
+    const again = document.createElement('button');
+    again.className = 'btn ghost say-add-bottom';
+    again.textContent = '+ Say';
+    again.title = 'Add another Say block right after this one';
+    again.onclick = addSayBlock;
+    body.appendChild(again);
+  }
 }
 
 /** Up to two blocks above `index`, as a compact read-only strip. */
