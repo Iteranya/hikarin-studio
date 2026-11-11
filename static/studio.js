@@ -498,6 +498,15 @@ function renderInspector() {
     return;
   }
 
+  // A two-block "you are here" glimpse of what sits directly above the block
+  // being edited — mobile only, where the editor is hidden behind a pane and
+  // the peek is the only at-a-glance orientation. On desktop the whole
+  // block list is visible anyway, so the peek would be pure noise.
+  if (isMobileLayout()) {
+    const peek = contextPeek(index);
+    if (peek) body.appendChild(peek);
+  }
+
   const title = document.createElement('div');
   title.className = 'inspector-title';
   title.innerHTML = `<span>${ICONS[block.kind] ?? '•'}</span>${TITLES[block.kind] ?? block.kind}`;
@@ -521,6 +530,30 @@ function renderInspector() {
   for (const field of fieldsFor(block)) {
     body.appendChild(renderField(block, field));
   }
+}
+
+/** Up to two blocks above `index`, as a compact read-only strip. */
+function contextPeek(index) {
+  if (index <= 0) return null;
+  const items = blocks();
+  const peek = document.createElement('div');
+  peek.className = 'context-peek';
+
+  const label = document.createElement('div');
+  label.className = 'context-peek-label';
+  label.textContent = 'Above';
+  peek.appendChild(label);
+
+  for (let i = Math.max(0, index - 2); i < index; i++) {
+    const b = items[i];
+    const row = document.createElement('button');
+    row.className = 'context-peek-row';
+    row.title = `Jump to block ${i + 1}`;
+    row.innerHTML = `<span class="block-icon">${ICONS[b.kind] ?? '•'}</span><span class="context-text">${summarise(b)}</span>`;
+    row.onclick = () => selectBlock(i);
+    peek.appendChild(row);
+  }
+  return peek;
 }
 
 /** Duplicate / Delete, for whichever block is selected. */
