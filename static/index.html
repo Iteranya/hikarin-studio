@@ -7,6 +7,8 @@
 <link rel="stylesheet" href="studio.css">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#14161a">
 </head>
 <body>
 
@@ -152,5 +154,6 @@
 </div>
 
 <script type="module" src="studio.js"></script>
+<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});</script>
 </body>
 </html>

@@ -7,6 +7,8 @@
 <link rel="stylesheet" href="play.css?v=3">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#14161a">
 </head>
 <body>
 
@@ -89,5 +91,6 @@
 
 <script src="vendor/hikarin-vn-viewer.umd.js?v=2"></script>
 <script type="module" src="play.js?v=3"></script>
+<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});</script>
 </body>
 </html>
