@@ -392,6 +392,27 @@ def serve_asset(slug: str, path: str):
 @app.get("/api/projects/{slug}/export")
 def export_project(slug: str, format: str = "pack"):
     """Compile and return a ready-to-install resource pack zip."""
+    fmt0 = (format or "pack").lower()
+    if fmt0 == "game":
+        # Game builds bypass the story compiler entirely — the game registry,
+        # events and orchestrator are the unit under test.
+        from hikarin import game as game_build
+        try:
+            report = game_build.compile_game(slug)
+        except project_store.ProjectError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        if not report["ok"]:
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "errors": report["errors"], "warnings": report["warnings"]},
+            )
+        game_json = report["buildDir"] / "game.json"
+        return Response(
+            content=game_json.read_bytes(),
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="game.json"'},
+        )
+
     try:
         loaded = project_store.load_project(slug)
     except project_store.ProjectError as e:
@@ -424,7 +445,7 @@ def export_project(slug: str, format: str = "pack"):
             payload = build_project_bundle(loaded["meta"], loaded["files"], project_store.project_dir(slug))
             media = "application/zip"
         else:
-            raise HTTPException(status_code=400, detail=f"Unknown export format: {format!r} (pack|json|txt|md|bundle)")
+            raise HTTPException(status_code=400, detail=f"Unknown export format: {format!r} (pack|json|txt|md|bundle|game)")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

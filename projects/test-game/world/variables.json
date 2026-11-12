@@ -1,0 +1,16 @@
+{
+  "variables": [
+    {
+      "name": "hestia_met",
+      "type": "boolean",
+      "default": false,
+      "desc": "Met Hestia"
+    },
+    {
+      "name": "west_open",
+      "type": "boolean",
+      "default": false,
+      "desc": "West gate open"
+    }
+  ]
+}

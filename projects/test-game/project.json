@@ -1,0 +1,7 @@
+{
+  "kind": "game",
+  "packName": "Test Game",
+  "description": "Acceptance test fixture",
+  "version": 1,
+  "start": "start"
+}

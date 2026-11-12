@@ -1,0 +1,10 @@
+{
+  "kind": "story",
+  "character": "hestia",
+  "packName": "Hestia",
+  "packFormat": 15,
+  "startLabel": "start",
+  "files": [
+    "main.story"
+  ]
+}

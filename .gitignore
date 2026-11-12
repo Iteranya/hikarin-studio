@@ -10,3 +10,4 @@ projects/*/assets/
 
 # Local run log
 server.log
+projects/*/build/
