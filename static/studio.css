@@ -1312,3 +1312,5 @@ html, body {
 .game-map-dims { color: var(--muted-foreground); font-family: var(--mono); font-size: 10px; }
 .game-map-canvas-scroll { flex: 1 1 auto; overflow: auto; background: var(--bg); }
 #game-map-canvas { display: block; image-rendering: pixelated; margin: 24px; cursor: crosshair; background: #090b10; }
+
+.game-shell[hidden] { display: none; }
