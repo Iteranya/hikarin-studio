@@ -199,6 +199,10 @@ def save_project(slug: str, meta: dict[str, Any], files: dict[str, list[dict]]) 
 
 
 def create_project(slug: str, meta: dict[str, Any] | None = None) -> dict[str, Any]:
+    meta = dict(meta or {})
+    if meta.get("kind") == "game":
+        return create_game_project(slug, meta)
+
     path = project_dir(slug)
     if path.exists() and any(path.iterdir()):
         raise ProjectError(f"Project '{slug}' already exists")
@@ -299,6 +303,126 @@ def list_assets(path: Path) -> dict[str, Any]:
 
     return inventory(path)
 
+
+# ── game projects ───────────────────────────────────────────────────────────
+
+DEFAULT_GAME: dict[str, Any] = {
+    "kind": "game",
+    "packName": "My Game",
+    "description": "Made with Hikarin Studio",
+    "version": 1,
+    "start": "start",
+}
+
+
+def create_game_project(slug: str, meta: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Scaffold a game project: nested event slot, world folder, one main flow.
+
+    The generated ``world/map.orch`` is a ready-to-run skeleton (meta -> label
+    -> ending) so a game is openable and buildable on creation day.
+    """
+    path = project_dir(slug)
+    if path.exists() and any(path.iterdir()):
+        raise ProjectError(f"Project '{slug}' already exists")
+    path.mkdir(parents=True, exist_ok=True)
+
+    # Same mediafile scaffold as stories: assets shared by every event.
+    (path / "images" / "characters").mkdir(parents=True, exist_ok=True)
+    (path / "images" / "asset").mkdir(parents=True, exist_ok=True)
+    (path / "sounds" / "music").mkdir(parents=True, exist_ok=True)
+    (path / "sounds" / "sound").mkdir(parents=True, exist_ok=True)
+    (path / "events").mkdir()
+    world = path / "world"
+    world.mkdir()
+
+    (world / VARIABLES_FILE_NAME).write_text(
+        json.dumps({"variables": []}, indent=2) + "\n", encoding="utf-8"
+    )
+
+    skeleton = {
+        "kind": "orch-graph",
+        "start": "n_meta",
+        "nodes": [
+            {"id": "n_meta", "verb": "meta", "fields": {"action": "start"}, "at": [0, 0]},
+            {"id": "n_label", "verb": "label", "fields": {"label": "start"}, "at": [0, 120]},
+            {"id": "n_end", "verb": "ending", "fields": {}, "at": [0, 240]},
+        ],
+        "wires": [
+            {"from": ["n_meta", "out"], "to": ["n_label", "in"]},
+            {"from": ["n_label", "out"], "to": ["n_end", "in"]},
+        ],
+    }
+    (world / "map.orch").write_text(json.dumps(skeleton, indent=2) + "\n", encoding="utf-8")
+
+    merged = dict(DEFAULT_GAME)
+    if meta:
+        merged.update(meta)
+    merged["kind"] = "game"
+    (path / "project.json").write_text(
+        json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return load_game_meta(path)
+
+
+def load_game_meta(path: Path) -> dict[str, Any]:
+    """Everything the game editor needs, loaded once."""
+    meta_file = path / "project.json"
+    meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    events = [
+        child.name
+        for child in sorted((path / EVENTS_DIRNAME).iterdir())
+        if child.is_dir() and (child / "project.json").is_file()
+    ] if (path / EVENTS_DIRNAME).is_dir() else []
+    world = path / WORLD_DIRNAME
+    files = []
+    if world.is_dir():
+        for f in sorted(world.glob("*")):
+            if f.is_file() and f.suffix in (".orch", ".json", ".md"):
+                files.append(f.name)
+    return {
+        "meta": meta,
+        "events": events,
+        "worldFiles": files,
+        "buildDir": str(path / "build"),
+    }
+
+
+VARIABLES_FILE_NAME = "variables.json"
+EVENTS_DIRNAME = "events"
+WORLD_DIRNAME = "world"
+
+
+def _world_containment(slug: str, rel: str) -> Path:
+    """Resolve rel under <project>/world/ and refuse anything outside it."""
+    base = project_dir(slug) / WORLD_DIRNAME
+    base_resolved = base.resolve()
+    target = (base / rel).resolve()
+    if target != base_resolved and base_resolved not in target.parents:
+        raise ProjectError("Path escapes the world folder")
+    if not target.is_file():
+        raise ProjectError(f"world file not found: {rel!r}")
+    return target
+
+
+def read_world_file(slug: str, rel: str) -> str:
+    return _world_containment(slug, rel).read_text(encoding="utf-8")
+
+
+def write_world_file(slug: str, rel: str, content: str) -> None:
+    base = project_dir(slug) / WORLD_DIRNAME
+    base_resolved = base.resolve()
+    target = (base / rel).resolve()
+    if target != base_resolved and base_resolved not in target.parents:
+        raise ProjectError("Path escapes the world folder")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.suffix in (".orch", ".json"):
+        try:
+            json.loads(content)
+        except json.JSONDecodeError as e:
+            raise ProjectError(f"world file must be valid JSON: {e}") from e
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(target)
 
 # ── duplicate / rename / import ─────────────────────────────────────────────
 

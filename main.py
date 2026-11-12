@@ -53,6 +53,10 @@ class SaveRequest(BaseModel):
     files: dict[str, list[Block]]
 
 
+class RawSaveRequest(BaseModel):
+    content: str
+
+
 class CreateRequest(BaseModel):
     slug: str
     meta: dict = Field(default_factory=dict)
@@ -283,6 +287,39 @@ def _suggested_variables(files: dict[str, list[dict]]) -> list[dict]:
             }
 
     return sorted(found.values(), key=lambda v: (v["scope"] != "PLAYER", v["name"]))
+
+
+# ── game: world files ───────────────────────────────────────────
+
+@app.get("/api/projects/{slug}/world")
+def list_world_files(slug: str):
+    """The game editor's world-file summary (kind, events, world files)."""
+    try:
+        return project_store.load_game_meta(project_store.project_dir(slug))
+    except project_store.ProjectError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@app.get("/api/projects/{slug}/worldfile/{path:path}")
+def read_world_file(slug: str, path: str):
+    """Raw text of one world file (the studio round-trips verbatim)."""
+    try:
+        return Response(
+            content=project_store.read_world_file(slug, path),
+            media_type="application/json",
+        )
+    except project_store.ProjectError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@app.put("/api/projects/{slug}/worldfile/{path:path}")
+def write_world_file(slug: str, path: str, req: RawSaveRequest):
+    """Raw text write; .orch/.json contents are validated as JSON."""
+    try:
+        project_store.write_world_file(slug, path, req.content)
+        return {"ok": True}
+    except project_store.ProjectError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # ── assets ──────────────────────────────────────────────────────────────────

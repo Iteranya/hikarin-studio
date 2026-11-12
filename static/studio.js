@@ -9,6 +9,7 @@
  */
 
 import { initAssets, openAssets, deleteAssetPath } from './assets.js';
+import { openGameEditor, closeGameEditor } from './game.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -132,6 +133,24 @@ async function openProject(slug) {
   const data = await fetch(`/api/projects/${slug}`).then((r) => r.json());
   state.project = data;
   const sel = document.getElementById('project-select'); if (sel) sel.value = slug;
+  if (data.meta?.kind === 'game') {
+    // Game projects bypass the story editor entirely; nobody should be
+    // staring at the dialogue blocks for a world graph.
+    closeGameEditor(); // closed state reset, then re-open below
+    $('game-shell').hidden = false;
+    document.querySelector('.workspace').style.visibility = 'hidden';
+    document.getElementById('empty-state')?.setAttribute('hidden', 'hidden');
+    state.project.meta.files = [];
+    state.project.files = {};
+    state.project.assets = data.assets ?? state.project.assets;
+    $('mobile-nav')?.setAttribute('hidden', 'hidden');
+    await openGameEditor(data);
+    return;
+  }
+  closeGameEditor();
+  $('game-shell').hidden = true;
+  $('mobile-nav')?.removeAttribute('hidden');
+  document.querySelector('.workspace').style.visibility = 'visible';
   state.activeFile = data.meta.files[0] ?? null;
   state.selected = null;
   state.dirty = false;

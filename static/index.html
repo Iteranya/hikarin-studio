@@ -41,6 +41,7 @@
       <option value="txt">Script (.txt)</option>
       <option value="md">Script (.md)</option>
       <option value="bundle">Project (.hikarin.zip)</option>
+      <option value="game">Game (game.json)</option>
     </select>
     <button class="btn" id="btn-export" disabled title="Export current project">📦 Export</button>
   </div>
@@ -150,6 +151,80 @@
     <div class="assets-body" id="assets-body"></div>
     <div class="assets-foot" id="assets-foot"></div>
     <div class="assets-status" id="assets-status"></div>
+  </div>
+</div>
+
+
+<!-- ── GAME EDITOR SHELL ───────────────────────────────────────────── -->
+<div class="game-shell" id="game-shell" hidden>
+  <header class="game-tabs">
+    <div class="game-tabset" role="tablist">
+      <button class="game-tab active" data-tab="flow" role="tab">Flow</button>
+      <button class="game-tab" data-tab="vars" role="tab">Variables</button>
+    </div>
+    <input class="game-file-pick" id="game-orch-pick" title="World graph file" readonly>
+    <span class="game-spacer"></span>
+    <span class="chip subtle" id="game-build-status">not built</span>
+    <button class="btn tiny" id="game-save" title="Save (Ctrl+S)">💾 Save</button>
+    <button class="btn tiny" id="game-validate" title="Check graph and registry">Validate</button>
+    <button class="btn tiny primary" id="game-export" title="Build and download game.json">📦 Export</button>
+  </header>
+
+  <div class="game-body">
+    <!-- FLOW CANVAS -->
+    <div class="game-flow" id="game-flow-pane">
+      <div class="game-canvas-toolbar">
+        <select id="game-add-node" class="select tiny">
+          <option value="">＋ Add node…</option>
+          <option value="meta">Meta (start)</option>
+          <option value="label">Label</option>
+          <option value="jump">Jump</option>
+          <option value="conditional">Conditional</option>
+          <option value="map">Map load</option>
+          <option value="entity">Entity</option>
+          <option value="run_event">Run event</option>
+          <option value="set_world">Set world var</option>
+          <option value="save">Save</option>
+          <option value="ending">Ending</option>
+        </select>
+        <span class="game-canvas-spacer"></span>
+        <button class="btn tiny ghost" id="game-zoom-out" title="Zoom out">−</button>
+        <span class="game-zoom" id="game-zoom-label">100%</span>
+        <button class="btn tiny ghost" id="game-zoom-in" title="Zoom in">+</button>
+        <button class="btn tiny ghost" id="game-zoom-fit" title="Fit">Fit</button>
+      </div>
+      <div class="game-canvas" id="game-canvas" tabindex="0">
+        <div class="game-world" id="game-world">
+          <svg class="game-wires" id="game-wires"></svg>
+          <div class="game-nodes" id="game-nodes"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VARIABLES REGISTRY -->
+    <div class="game-vars" id="game-vars-pane" hidden>
+      <div class="game-vars-head">
+        <span class="game-vars-title">World Variables</span>
+        <span class="chip subtle" id="game-vars-count">0 declared</span>
+        <span class="game-vars-spacer"></span>
+        <button class="btn tiny" id="game-vars-add">+ Add</button>
+      </div>
+      <div class="game-vars-table-wrap">
+        <table class="game-vars-table" id="game-vars-table">
+          <thead><tr><th>Name</th><th>Type</th><th>Default</th><th>Description</th><th></th></tr></thead>
+          <tbody id="game-vars-tbody"></tbody>
+        </table>
+      </div>
+      <p class="game-vars-hint">World registry — every <code>@world.*</code> flag in this game is listed here. Unused entries warn at export; references absent from the registry still compile.</p>
+    </div>
+
+    <!-- INSPECTOR -->
+    <aside class="game-inspector" id="game-inspector">
+      <div class="pane-head">Node</div>
+      <div class="game-inspector-body" id="game-inspector-body">
+        <div class="empty-hint">Select a node to edit it.</div>
+      </div>
+    </aside>
   </div>
 </div>
 
