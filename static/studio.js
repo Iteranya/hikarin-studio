@@ -59,6 +59,7 @@ async function boot() {
   initAssets({ state, onChange: onAssetsChanged });
   await refreshProjectList();
   wireChrome();
+  wireLauncher();
   wireMobileNav();
 }
 
@@ -102,6 +103,144 @@ function onAssetsChanged() {
   renderBlocks();
 }
 
+// ── project launcher (page) ──────────────────────────────────────────────────
+
+const launcher = {
+  projects: [],
+  filter: '',
+};
+
+async function showLauncher() {
+  launcher.projects = await fetch('/api/projects').then((r) => r.json()).catch(() => []);
+  document.getElementById('launcher').hidden = false;
+  const input = document.getElementById('launcher-search');
+  if (input) input.value = launcher.filter;
+  renderLauncher();
+}
+
+function hideLauncher() {
+  const el = document.getElementById('launcher');
+  if (el) el.hidden = true;
+}
+
+function renderLauncher() {
+  const grid = document.getElementById('launcher-grid');
+  if (!grid) return;
+  const q = launcher.filter.trim().toLowerCase();
+  const list = launcher.projects.filter((p) => !q
+    || p.slug.toLowerCase().includes(q)
+    || (p.packName ?? '').toLowerCase().includes(q)
+    || (p.description ?? '').toLowerCase().includes(q));
+
+  const countEl = document.getElementById('launcher-count');
+  if (countEl) countEl.textContent = `${launcher.projects.length} project${launcher.projects.length === 1 ? '' : 's'}`;
+
+  if (!list.length) {
+    grid.innerHTML = launcher.filter
+      ? `<div class="launcher-empty"><div class="launcher-empty-title">No matches for "${escapeLauncher(launcher.filter)}"</div><div>Try clearing the filter.</div></div>`
+      : `<div class="launcher-empty"><div class="launcher-empty-title">No projects yet</div><div>Press <b>New Story</b> for a visual-novel script, or <b>New Game</b> for an orchestrator-driven world.</div></div>`;
+    return;
+  }
+
+  grid.innerHTML = list.map((p) => `
+    <div class="launch-card" data-slug="${escapeLauncher(p.slug)}" tabindex="0" role="button">
+      <div class="launch-card-top">
+        <div class="launch-icon ${p.kind === 'game' ? 'game' : 'story'}">${p.kind === 'game' ? '🎮' : '📖'}</div>
+        <div>
+          <div class="launch-card-name">${escapeLauncher(p.packName || p.slug)}</div>
+          <div class="launch-card-slug">${escapeLauncher(p.slug)}</div>
+        </div>
+        <span class="launch-kind ${p.kind === 'game' ? 'game' : 'story'}">${escapeLauncher(p.kind ?? 'story')}</span>
+      </div>
+      <div class="launch-desc">${escapeLauncher(p.description ?? '')}</div>
+      <div class="launch-meta">
+        <span>${(p.files ?? []).length} file${(p.files ?? []).length === 1 ? '' : 's'}</span>
+        <span>·</span>
+        <span>${relTime(p.modified)}</span>
+      </div>
+      <div class="launch-card-actions">
+        <button class="btn tiny primary launch-open">Open</button>
+        <button class="btn tiny launch-duplicate">Duplicate</button>
+        <button class="btn tiny danger launch-delete" title="Delete">Delete</button>
+      </div>
+    </div>`).join('');
+
+  grid.querySelectorAll('.launch-card').forEach((card) => {
+    const slug = card.dataset.slug;
+    card.addEventListener('click', (ev) => {
+      if (ev.target.closest('button')) return;
+      hideLauncher();
+      openProject(slug);
+    });
+    card.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { hideLauncher(); openProject(slug); }
+    });
+    card.querySelector('.launch-open').addEventListener('click', () => { hideLauncher(); openProject(slug); });
+    card.querySelector('.launch-duplicate').addEventListener('click', () => launcherDuplicate(slug));
+    card.querySelector('.launch-delete').addEventListener('click', () => launcherDelete(slug));
+  });
+}
+
+function escapeLauncher(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
+
+function relTime(ms) {
+  const s = Math.floor((Date.now() - Number(ms || 0)) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24); return `${d}d ago`;
+}
+
+async function launcherDuplicate(slug) {
+  const new_slug = prompt('New project name (lowercase, no spaces)', slug + '-copy');
+  if (!new_slug) return;
+  const res = await fetch(`/api/projects/${slug}/duplicate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ new_slug }),
+  });
+  if (!res.ok) { alert((await res.json()).detail || 'Duplicate failed'); return; }
+  await showLauncher();
+}
+
+async function launcherDelete(slug) {
+  if (!confirm(`Delete project "${slug}"? This removes its folder and all files inside it.`)) return;
+  const res = await fetch(`/api/projects/${slug}`, { method: 'DELETE' });
+  if (!res.ok) { alert((await res.json()).detail || 'Delete failed'); return; }
+  if (state.project?.slug === slug) state.project = null;
+  await showLauncher();
+}
+
+async function launcherNew(kind) {
+  const slug = prompt(kind === 'game' ? 'Game name (lowercase, no spaces)' : 'Project name (lowercase, no spaces)');
+  if (!slug) return;
+  const packName = prompt(kind === 'game' ? 'Game title' : 'Story title', slug) || slug;
+  const res = await fetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug, meta: { kind, packName, character: slug } }),
+  });
+  if (!res.ok) { alert((await res.json()).detail || 'Could not create the project.'); return; }
+  hideLauncher();
+  await openProject(slug);
+}
+
+function wireLauncher() {
+  document.getElementById('btn-launcher')?.addEventListener('click', () => {
+    if (document.getElementById('launcher').hidden) showLauncher();
+    else hideLauncher();
+  });
+  document.getElementById('launcher-search')?.addEventListener('input', (e) => {
+    launcher.filter = e.target.value;
+    renderLauncher();
+  });
+  document.getElementById('launcher-new-story')?.addEventListener('click', () => launcherNew('story'));
+  document.getElementById('launcher-new-game')?.addEventListener('click', () => launcherNew('game'));
+  document.getElementById('launcher-import')?.addEventListener('click', () => document.getElementById('file-import').click());
+}
+
 async function refreshProjectList() {
   const projects = await fetch('/api/projects').then((r) => r.json());
   const sel = document.getElementById('project-select');
@@ -121,11 +260,12 @@ async function refreshProjectList() {
     return;
   }
   // Auto-open the most recently modified project so a reload resumes work.
-  const slug = state.project?.slug ?? projects[projects.length - 1].slug;
-  await openProject(slug);
+  // Boot (and fresh returns) land on the project manager page, not a story.
+  await showLauncher();
 }
 
 async function openProject(slug) {
+  hideLauncher();
   // Whatever is on screen has to be on disk before the next project's files are
   // read, or an autosave can land on the project you just left.
   if (state.project) await flushAutosave();

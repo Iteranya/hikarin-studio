@@ -97,12 +97,24 @@ def list_projects() -> list[dict[str, Any]]:
             meta = json.loads(meta_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        modified = meta_file.stat().st_mtime
+        try:
+            for f in entry.rglob("*"):
+                if f.is_file():
+                    m = f.stat().st_mtime
+                    if m > modified:
+                        modified = m
+        except OSError:
+            pass
         found.append(
             {
                 "slug": entry.name,
+                "kind": meta.get("kind", "story"),
                 "character": meta.get("character", entry.name),
                 "packName": meta.get("packName", entry.name),
+                "description": meta.get("description", ""),
                 "files": meta.get("files", []),
+                "modified": int(modified * 1000),
             }
         )
     return found

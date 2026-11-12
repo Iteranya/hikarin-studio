@@ -32,6 +32,7 @@
     <button class="btn" id="btn-delete" title="Delete current project">Delete</button>
     <button class="btn" id="btn-import" title="Import a .hikarin.zip project bundle">Import</button>
     <input type="file" id="file-import" accept=".zip" hidden>
+    <button class="btn" id="btn-launcher" title="Project manager">🗂️ Projects</button>
     <button class="btn" id="btn-assets" disabled title="Add images, characters and sounds">🎨 Assets</button>
     <button class="btn" id="btn-save" title="Save (Ctrl+S)">💾 Save</button>
     <button class="btn primary" id="btn-play" disabled title="Test this scene">▶ Play</button>
@@ -152,6 +153,21 @@
     <div class="assets-foot" id="assets-foot"></div>
     <div class="assets-status" id="assets-status"></div>
   </div>
+</div>
+
+
+<!-- ── PROJECT LAUNCHER ───────────────────────────────────────────── -->
+<div class="launcher" id="launcher" hidden>
+  <header class="launcher-head">
+    <span class="launcher-title">Projects</span>
+    <span class="launcher-count" id="launcher-count">—</span>
+    <input class="launcher-search" id="launcher-search" placeholder="Filter projects…" autocomplete="off">
+    <span class="launcher-spacer"></span>
+    <button class="btn tiny" id="launcher-import" title="Import a .hikarin.zip project bundle">Import</button>
+    <button class="btn tiny" id="launcher-new-story" title="Create a visual-novel story project">New Story</button>
+    <button class="btn tiny primary" id="launcher-new-game" title="Create a game project (orchestrator + events)">New Game</button>
+  </header>
+  <div class="launcher-grid" id="launcher-grid"></div>
 </div>
 
 
