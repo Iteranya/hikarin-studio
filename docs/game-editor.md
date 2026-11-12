@@ -104,17 +104,18 @@ projects/my-game/
 | field | required | meaning |
 |---|---|---|
 | `id` | yes | unique per map; lowercase slug |
-| `kind` | yes | `static` (pinned to col,row) or `non-static` (engine binds it — a maid, a quest marker…) |
-| `col`,`row` | static only | cell position, 0-indexed |
+| `kind` | yes | `static` or `non-static` — a boolean hint; editor does nothing |
+| `col`,`row` | recommended for static | cell position, 0-indexed; non-static may omit |
 | `event` | yes | slug of a compiled event (`build/events/<slug>.json`) |
 | `visible_if`,`interact_if` | no | hikarin conditional grammar; absent = always |
 | `attach` | non-static only | free string the runtime interprets |
 
-- Static entities live on the map grid and render as hotspots; non-static
-  ones are bound by the engine to whatever it likes — the editor shows them
-  in the entity tray, not on the canvas. Either way, access control
-  happens **inside the event** (hikarin's `conditional` spine), never in the
-  world layer — the world can only route.
+- Static and non-static entities are **indistinguishable in the editor**:
+  both paint on the grid, both edit the same fields, `kind` is only a hint
+  engines interpret (static stays; non-static is engine-bound — a maid, a
+  quest marker…). The marker glyph differs cosmetically (`E` vs `◈`) and
+  nothing else. Access control happens **inside the event** (hikarin's
+  `conditional` spine) — never in the world layer; the world can only route.
 
 ## 6. Gates: who decides what
 
