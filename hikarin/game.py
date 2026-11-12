@@ -252,10 +252,12 @@ def load_maps(world_dir: Path, known_events: set[str] | None = None) -> MapsChec
                 check.errors.append(f"{label_e}: missing event slug")
             elif event not in known:
                 check.errors.append(f'{label_e}: event "{event}" has no compiled event at events/{event}/')
-            if kind == "static":
-                c, r = entity.get("col"), entity.get("row")
+            c, r = entity.get("col"), entity.get("row")
+            if kind == "static" and (not isinstance(c, int) or not isinstance(r, int)):
+                check.errors.append(f"{label_e}: static entity needs col/row")
+            elif c is not None or r is not None:
                 if not isinstance(c, int) or not isinstance(r, int) or not (0 <= c < cols) or not (0 <= r < rows):
-                    check.errors.append(f"{label_e}: static entity needs col/row inside the grid")
+                    check.errors.append(f"{label_e}: col/row ({c},{r}) is outside the grid")
 
     check.start_map = start_map
     check.maps = maps_obj

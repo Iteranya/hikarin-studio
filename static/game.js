@@ -251,10 +251,7 @@ function renderEntityEditor() {
   $('game-entity-vis').value = e?.visible_if ?? '';
   $('game-entity-interact').value = e?.interact_if ?? '';
   $('game-entity-attach').value = e?.attach ?? '';
-  const isStatic = (e?.kind ?? 'static') === 'static';
-  $('game-entity-col').style.display = isStatic ? '' : 'none';
-  $('game-entity-row').style.display = isStatic ? '' : 'none';
-  $('game-entity-attach').style.display = isStatic ? 'none' : '';
+  // kind is JUST a boolean — col/row/attach are always shown
 }
 
 // ── canvas ────────────────────────────────────────────────────────────────────
@@ -292,9 +289,10 @@ function renderCanvas() {
   drawMarker(ctx, m.spawn.col, m.spawn.row, size, '🚶', '#38bdf8');
 
   (m.entities ?? []).forEach((entity, i) => {
-    if (entity.kind !== 'static' || entity.col === undefined) return;
+    if (entity.col === undefined || entity.row === undefined) return;
     const selected = i === state.activeEntityIndex;
-    drawMarker(ctx, entity.col, entity.row, size, 'E', selected ? '#a78bfa' : '#818cf8', selected);
+    const color = entity.kind === 'non-static' ? '#34d399' : '#818cf8';
+    drawMarker(ctx, entity.col, entity.row, size, entity.kind === 'non-static' ? '◈' : 'E', selected ? '#a78bfa' : color, selected);
   });
 }
 
