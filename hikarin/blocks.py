@@ -354,6 +354,32 @@ def _to_action_play_level(d: dict) -> dict:
     return action
 
 
+def _to_action_map(d: dict) -> dict:
+    """Switch the engine to another map (game-cartridge extension).
+
+    Not a Minecraft/TLM action. Engines that do not know `map` ignore it,
+    exactly as they ignore any unknown action type. ``facing`` is optional;
+    if absent the engine decides (default: `down`).
+    """
+    x = d.get("x", 0)
+    y = d.get("y", 0)
+    if not isinstance(x, int):
+        x = int(x or 0)
+    if not isinstance(y, int):
+        y = int(y or 0)
+    action = {
+        "type": "map",
+        "action": "switch",
+        "map": d.get("map") or "",
+        "x": x,
+        "y": y,
+    }
+    facing = d.get("facing")
+    if facing:
+        action["facing"] = str(facing)
+    return action
+
+
 BUILDERS = {
     "say": _to_action_say,
     "choice": _to_action_choice,
@@ -376,6 +402,7 @@ BUILDERS = {
     "sound": _to_action_sound,
     "command": _to_action_command,
     "playLevel": _to_action_play_level,
+    "mapSwitch": _to_action_map,
 }
 
 # ── action -> block (for loading a shipped JSON back into the editor) ────────
@@ -404,6 +431,7 @@ FROM_ACTION = {
     "play_sound": "sound",
     "command": "command",
     "play_level": "playLevel",
+    "map": "mapSwitch",
 }
 
 
@@ -512,4 +540,13 @@ def block_from_action(action: dict) -> dict | None:
         }}
     if kind == "idle" or kind == "end" or kind == "clearBackground":
         return {"kind": kind, "data": {}}
+    if kind == "mapSwitch":
+        data = {
+            "map": action.get("map", ""),
+            "x": int(action.get("x", 0)),
+            "y": int(action.get("y", 0)),
+        }
+        if action.get("facing"):
+            data["facing"] = str(action["facing"])
+        return {"kind": kind, "data": data}
     return None

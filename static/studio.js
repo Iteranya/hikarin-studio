@@ -342,7 +342,7 @@ const GROUP_COLOURS = {
 const ICONS = {
   say: '💬', choice: '🔀', nightChoice: '🌙', idle: '🗣️',
   show: '🎭', hide: '👋', background: '🖼️', clearBackground: '⬛',
-  label: '🏷️', jump: '➡️', if: '❓', next: '⏭️', end: '🏁', playLevel: '▶️',
+  label: '🏷️', jump: '➡️', if: '❓', next: '⏭️', end: '🏁', playLevel: '▶️', mapSwitch: '🗺️',
   setVar: '📝', unlock: '🔓', giveItem: '🎁', takeItem: '✋',
   music: '🎵', sound: '🔊', command: '⌨️',
 };
@@ -353,7 +353,7 @@ const TITLES = {
   clearBackground: 'Clear Background', label: 'Label', jump: 'Jump', if: 'If',
   next: 'Resume Point', end: 'End Scene', setVar: 'Set Variable', unlock: 'Unlock',
   giveItem: 'Give Item', takeItem: 'Take Item', music: 'Music', sound: 'Sound',
-  command: 'Command', playLevel: 'Play Level (PvZ)',
+  command: 'Command', playLevel: 'Play Level (PvZ)', mapSwitch: 'Map Switch',
 };
 
 // Blocks the palette shows, in palette order. Not every engine action gets a
@@ -362,7 +362,7 @@ const TITLES = {
 const PALETTE = [
   ['talk', ['say', 'choice', 'nightChoice', 'idle']],
   ['stage', ['show', 'hide', 'background', 'clearBackground']],
-  ['flow', ['label', 'jump', 'if', 'next', 'end', 'playLevel']],
+  ['flow', ['label', 'jump', 'if', 'next', 'end', 'playLevel', 'mapSwitch']],
   ['state', ['setVar', 'unlock', 'giveItem', 'takeItem']],
   ['audio', ['music', 'sound']],
 ];
@@ -558,10 +558,26 @@ function summarise(block) {
     }
     case 'next':
       return `<span class="block-sub">resume here next time →</span> <b>${esc(d.target || '?')}</b>`;
+    case 'mapSwitch':
+      // Game cartridges: the engine swaps the current map. Names resolve
+      // against world/maps.json in the shipping game; free text in a story.
+      all.push(text('map', 'Map id', 'home', 'maps.json id to load'));
+      all.push({ key: 'x', label: 'X', render: () => numberInput(d, 'x', 0) });
+      all.push({ key: 'y', label: 'Y', render: () => numberInput(d, 'y', 0) });
+      all.push(selectEl(d, 'facing', [
+        { value: 'up', label: 'up' },
+        { value: 'down', label: 'down' },
+        { value: 'left', label: 'left' },
+        { value: 'right', label: 'right' },
+      ], 'Facing'));
+      break;
+
     case 'playLevel':
       return `<span class="block-sub">play →</span> <b>${esc(d.level || '?')}</b>`;
     case 'end':
       return '<span class="block-sub">close the screen</span>';
+    case 'mapSwitch':
+      return `<span class="block-sub">map →</span> <b>${esc(d.map || '?')}</b> <span class="block-sub">(${esc(d.x ?? 0)}, ${esc(d.y ?? 0)})${d.facing ? ` · ${esc(d.facing)}` : ''}</span>`;
     case 'setVar': {
       const op = { set: '=', increment_var: '+=', subtract_var: '-=' }[d.operation] || '=';
       return `<span class="block-sub">${esc(d.scope || 'scene')}·${esc(d.var || '?')} ${op} ${esc(d.value)}</span>`;
@@ -634,6 +650,8 @@ function defaultData(kind) {
       return { level: '', on_complete: '', on_fail: '' };
     case 'unlock':
       return { labels: [] };
+    case 'mapSwitch':
+      return { map: '', x: 0, y: 0, facing: 'down' };
     default:
       return {};
   }

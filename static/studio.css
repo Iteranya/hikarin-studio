@@ -1215,3 +1215,100 @@ html, body {
   color: var(--muted-foreground);
 }
 .launcher-empty-title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+
+/* ── GAME MAP EDITOR ─────────────────────────────────────────── */
+.game-map { flex: 1 1 auto; display: flex; min-width: 0; }
+
+.game-map-sidebar {
+  flex: 0 0 300px;
+  border-right: 1px solid var(--border);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.game-map-side-head, .game-map-tool-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+}
+
+.game-map-list { display: flex; flex-direction: column; gap: 4px; padding: 8px; }
+.game-map-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+}
+.game-map-item:hover { border-color: var(--border); background: var(--bg); }
+.game-map-item.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.game-map-item .game-map-item-dims { margin-left: auto; color: var(--muted-foreground); font-family: var(--mono); font-size: 10px; }
+
+.game-map-tabs { display: flex; gap: 4px; padding: 8px; border-bottom: 1px solid var(--border); }
+.game-map-tab {
+  flex: 1 1 auto;
+  padding: 5px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted-foreground);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.game-map-tab.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+
+.game-map-tool { padding: 6px 8px 10px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border); }
+
+.game-tile-tray, .game-entity-tray { display: flex; flex-wrap: wrap; gap: 6px; }
+.game-tile-chip, .game-entity-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text);
+}
+.game-tile-chip img { width: 22px; height: 22px; image-rendering: pixelated; object-fit: contain; }
+.game-tile-chip.active, .game-entity-chip.active { border-color: var(--accent); color: var(--accent); }
+.game-tile-chip .tile-trav { font-size: 10px; color: var(--muted-foreground); }
+
+.game-tile-editor, .game-entity-editor { display: flex; flex-direction: column; gap: 6px; padding: 0 2px; }
+.game-tile-editor input, .game-entity-editor input, .game-entity-editor select, .game-entity-editor button {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 5px; padding: 5px 8px; font-size: 12px;
+}
+.game-tile-trav { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted-foreground); }
+
+.game-map-hint { font-size: 11px; color: var(--muted-foreground); padding: 6px 4px; }
+
+.game-map-canvas-wrap { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+.game-map-canvas-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+.game-map-name { font-weight: 600; font-size: 13px; }
+.game-map-dims { color: var(--muted-foreground); font-family: var(--mono); font-size: 10px; }
+.game-map-canvas-scroll { flex: 1 1 auto; overflow: auto; background: var(--bg); }
+#game-map-canvas { display: block; image-rendering: pixelated; margin: 24px; cursor: crosshair; background: #090b10; }

@@ -1,28 +1,29 @@
-"""Game projects: a folder of nested hikarin projects plus a world model,
+"""Game projects: a folder of nested hikarin projects plus shared world data,
 compiled into one ``build/`` folder the runtime engine loads.
 
-Layout (one project = one orchestrator)::
+Layout (one project = one game)::
 
     projects/my-game/
-        project.json          {"kind": "game", "packName": ..., "start": "start"}
+        project.json          {"kind": "game", "packName": ..., "startMap": "home"}
         world/
-            <name>.orch        the orchestrator graph (see orchestrator.py)
             variables.json     SHARED world-variable registry (all @world.*)
-            maps.json          OPTIONAL map definitions (tiles, palette, entities)
+            maps.json          grid maps (tiles, palette, entities, spawn)
         events/
-            <event-slug>/      a nested hikarin project (story kind), compiled output = build/events/<slug>.json
+            <event-slug>/      a nested hikarin story project
                 project.json    {"kind": "story", ...}
                 <story>.story
-        images/                shared assets
+        images/                shared assets (also served to the canvas)
         sounds/                shared assets
         build/                 ← export output, gitignored
-            game.json          the orchestrator: {meta, maps, script}
-            events/<slug>.json compiled event
+            game.json          {meta, maps} — the world definition
+            events/<slug>.json compiled event (hikarin JSON, verbatim)
             images/...
+            sounds/...
 
-One project is one orchestrator. An orchestrator just like a script is composed
-of many source files before compiled together into a single json in the end
-product. The game output is *multiple* json: one orchestrator + one per event.
+Game logic lives inside hikarin itself: a map switch is a hikarin action
+(``map``), conditional blocks are hikarin conditionals, and the world flags
+run on the same variables the story already uses. There is no secondary
+graph language.
 """
 
 from __future__ import annotations
@@ -36,7 +37,6 @@ from typing import Any
 
 from . import projects as project_store
 from .compiler import compile_project
-from .orchestrator import compile_orch_files, load_orch_files
 
 GAME_KIND = "game"
 EVENTS_DIRNAME = "events"
@@ -44,12 +44,12 @@ WORLD_DIRNAME = "world"
 VARIABLES_FILE = "variables.json"
 MAPS_FILE = "maps.json"
 BUILD_DIRNAME = "build"
-ORCH_GLOB = "*.orch"
 
 # ── registry validation ──────────────────────────────────────────────────────
 
 _VALID_PRIMITIVES = ("string", "number", "boolean")
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 @dataclass
@@ -72,7 +72,6 @@ def load_registry(world_dir: Path) -> RegistryCheck:
     check = RegistryCheck()
     path = world_dir / VARIABLES_FILE
     if not path.is_file():
-        # Registry is optional. Absence = free-text variables everywhere.
         return check
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -119,6 +118,147 @@ def load_registry(world_dir: Path) -> RegistryCheck:
                 "desc": str(entry.get("desc", "")),
             }
         )
+    return check
+
+
+# ── maps validation ──────────────────────────────────────────────────────────
+
+@dataclass
+class MapsCheck:
+    start_map: str | None = None
+    maps: dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+def load_maps(world_dir: Path, known_events: set[str] | None = None) -> MapsCheck:
+    """Read and validate ``world/maps.json``.
+
+    Expected shape::
+
+        {
+          "startMap": "home",
+          "maps": {
+            "home": {
+              "cols": 16, "rows": 16,
+              "tiles": ["grass", "wall_a", ...],       # cols*rows entries
+              "palette": { "grass": {"image": "asset/grass.png", "traversable": true} },
+              "entities": [ {"id": "statue", "kind": "static", "col": 7, "row": 3,
+                             "event": "hestia", "visible_if": "", "interact_if": ""} ],
+              "spawn": {"col": 2, "row": 8, "facing": "down"}
+            }
+          }
+        }
+    """
+    check = MapsCheck()
+    known = known_events or set()
+    path = world_dir / MAPS_FILE
+    if not path.is_file():
+        check.warnings.append(f"{MAPS_FILE} not found — the engine has no map to boot from")
+        return check
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        check.errors.append(f"{MAPS_FILE} is not valid JSON: {e}")
+        return check
+    if not isinstance(raw, dict):
+        check.errors.append(f"{MAPS_FILE} must hold a JSON object")
+        return check
+
+    maps_obj = raw.get("maps")
+    if not isinstance(maps_obj, dict) or not maps_obj:
+        check.errors.append(f'{MAPS_FILE} must hold a non-empty "maps" object')
+        return check
+
+    start_map = raw.get("startMap") or next(iter(maps_obj))
+    if not isinstance(start_map, str) or start_map not in maps_obj:
+        check.errors.append(f'startMap "{start_map}" does not exist in maps')
+        start_map = None
+
+    for map_id, m in maps_obj.items():
+        label = f'map "{map_id}"'
+        if not _SLUG_RE.match(str(map_id)):
+            check.errors.append(f'{label}: invalid map id {map_id!r} (lowercase, digits, _, -)')
+            continue
+        if not isinstance(m, dict):
+            check.errors.append(f"{label}: must be an object")
+            continue
+
+        cols = m.get("cols")
+        rows = m.get("rows")
+        if not isinstance(cols, int) or not isinstance(rows, int) or cols < 1 or rows < 1:
+            check.errors.append(f"{label}: cols and rows must be positive integers")
+            continue
+
+        palette = m.get("palette") or {}
+        if not isinstance(palette, dict):
+            check.errors.append(f"{label}: palette must be an object")
+            continue
+        for tile_id, entry in palette.items():
+            if not isinstance(entry, dict):
+                check.errors.append(f"{label}: tile {tile_id!r} palette entry must be an object")
+                continue
+            if not isinstance(entry.get("image"), str):
+                check.errors.append(f"{label}: tile {tile_id!r} needs an image path")
+            if not isinstance(entry.get("traversable"), bool):
+                check.errors.append(f"{label}: tile {tile_id!r} needs traversable: true|false")
+
+        tiles = m.get("tiles")
+        if not isinstance(tiles, list):
+            check.errors.append(f"{label}: tiles must be an array of tile ids")
+            continue
+        expected = cols * rows
+        if len(tiles) != expected:
+            check.errors.append(f"{label}: tiles has {len(tiles)} entries; expected {expected} ({cols}x{rows})")
+        for index, tile_id in enumerate(tiles):
+            if tile_id not in palette:
+                check.errors.append(f"{label}: tiles[{index}] references unknown tile {tile_id!r}")
+                break
+
+        spawn = m.get("spawn") or {}
+        if not isinstance(spawn, dict):
+            check.errors.append(f"{label}: spawn must be an object")
+            spawn = {}
+        sc, sr = spawn.get("col", 0), spawn.get("row", 0)
+        if not isinstance(sc, int) or not isinstance(sr, int) or not (0 <= sc < cols) or not (0 <= sr < rows):
+            check.errors.append(f"{label}: spawn cell ({sc},{sr}) is outside the grid")
+        if isinstance(spawn.get("facing"), str) and spawn["facing"] not in ("up", "down", "left", "right"):
+            check.warnings.append(f"{label}: spawn facing should be up|down|left|right")
+
+        entities = m.get("entities") or []
+        if not isinstance(entities, list):
+            check.errors.append(f"{label}: entities must be an array")
+            entities = []
+        seen_ids: set[str] = set()
+        for entity in entities:
+            if not isinstance(entity, dict):
+                check.errors.append(f"{label}: entity entries must be objects")
+                continue
+            eid = entity.get("id")
+            label_e = f"{label} entity {eid!r}"
+            if not eid or not _SLUG_RE.match(str(eid)):
+                check.errors.append(f"{label_e}: invalid id (lowercase, digits, _, -)")
+                continue
+            if eid in seen_ids:
+                check.errors.append(f"{label_e}: duplicate entity id")
+                continue
+            seen_ids.add(eid)
+            kind = entity.get("kind", "static")
+            if kind not in ("static", "non-static"):
+                check.errors.append(f"{label_e}: kind must be static|non-static")
+                continue
+            event = entity.get("event")
+            if not event:
+                check.errors.append(f"{label_e}: missing event slug")
+            elif event not in known:
+                check.errors.append(f'{label_e}: event "{event}" has no compiled event at events/{event}/')
+            if kind == "static":
+                c, r = entity.get("col"), entity.get("row")
+                if not isinstance(c, int) or not isinstance(r, int) or not (0 <= c < cols) or not (0 <= r < rows):
+                    check.errors.append(f"{label_e}: static entity needs col/row inside the grid")
+
+    check.start_map = start_map
+    check.maps = maps_obj
     return check
 
 
@@ -173,14 +313,12 @@ def compile_game(slug: str, root: Path | None = None) -> dict[str, Any]:
     events_build = build_dir / "events"
     events_build.mkdir(parents=True, exist_ok=True)
 
-    event_info: list[tuple[str, list[str]]] = []   # (slug, file list)
     for event_dir in event_dirs(game_path):
         event_slug = event_dir.name
-        if not re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", event_slug):
+        if not _SLUG_RE.match(event_slug):
             errors.append(f'Event folder "{event_slug}": invalid slug for an event; use lowercase, digits, _, -')
             continue
         try:
-            # Reuse the story compiler unchanged — an event is just a story.
             event_project = json.loads((event_dir / "project.json").read_text(encoding="utf-8"))
             if is_game_meta(event_project):
                 errors.append(f'events/{event_slug}: nested games are not supported; folders are hikarin story projects')
@@ -200,7 +338,7 @@ def compile_game(slug: str, root: Path | None = None) -> dict[str, Any]:
                     data = json.loads(story_path.read_text(encoding="utf-8"))
                 except json.JSONDecodeError as e:
                     errors.append(f'events/{event_slug}/{name} is not valid JSON: {e}')
-                    files[name] = None
+                    files[name] = None  # type: ignore[assignment]
                     continue
                 files[name] = data
             if any(v is None for v in files.values()):
@@ -217,61 +355,24 @@ def compile_game(slug: str, root: Path | None = None) -> dict[str, Any]:
         out_file = events_build / f"{event_slug}.json"
         out_file.write_text(json.dumps(result.actions, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         events_out.append(event_slug)
-        event_info.append((event_slug, names))
 
-    # ── world: registry + maps + orchestrator ────────────────────────────────
+    # ── world: registry + maps ───────────────────────────────────────────────
     world_dir = game_path / WORLD_DIRNAME
     registry = load_registry(world_dir)
     errors.extend(f"variables.json: {e}" for e in registry.errors)
     warnings.extend(f"variables.json: {w}" for w in registry.warnings)
     declared: set[str] = {v["name"] for v in registry.variables}
 
-    maps: dict[str, Any] = {}
-    maps_path = world_dir / MAPS_FILE
-    if maps_path.is_file():
-        try:
-            maps = json.loads(maps_path.read_text(encoding="utf-8"))
-            if not isinstance(maps, dict):
-                errors.append(f"{MAPS_FILE} must hold a JSON object of map definitions")
-                maps = {}
-        except json.JSONDecodeError as e:
-            errors.append(f"{MAPS_FILE} is not valid JSON: {e}")
-
-    orch_files: dict[str, Any] = {}
-    if world_dir.is_dir():
-        orch_files = load_orch_files(world_dir)
-    orch = compile_orch_files(orch_files)
-    errors.extend(f"orchestrator: {e}" for e in orch["errors"])
-    warnings.extend(f"orchestrator: {w}" for w in orch["warnings"])
-
-    # ── cross-check the orchestrator against the registry and the events ────
-    known_events = set(events_out)
-    for action in orch.get("actions", []):
-        if action.get("type") == "run_event" and action.get("event"):
-            if action["event"] not in known_events:
-                errors.append(f'run_event "{action["event"]}" has no compiled event at events/{action["event"]}/')
-        if action.get("type") == "set_world":
-            raw = str(action.get("var", ""))
-            name = raw.removeprefix("@world.")
-            if name and name not in declared:
-                warnings.append(f'set_world references undeclared world variable "{name}" (free-text allowed)')
-        if action.get("type") == "conditional":
-            raw = str(action.get("var", ""))
-            name = raw.removeprefix("@world.")
-            if name and name not in declared:
-                warnings.append(f'conditional references undeclared world variable "{name}" (free-text allowed)')
+    maps = load_maps(world_dir, set(events_out))
+    errors.extend(f"maps.json: {e}" for e in maps.errors)
+    warnings.extend(f"maps.json: {w}" for w in maps.warnings)
 
     # ── unused registry entries: warn at export, never error ────────────────
-    referenced: set[str] = set()
-    for action in orch.get("actions", []):
-        for key in ("var", "value"):
-            v = action.get(key)
-            if isinstance(v, str):
-                referenced.add(v.removeprefix("@world."))
-    # Events also reference world flags; do the same walk on compiled event output.
-    all_event_json = " ".join(p.read_text(encoding="utf-8") for p in events_build.glob("*.json") if p.is_file())
+    all_content = " ".join(p.read_text(encoding="utf-8") for p in events_build.glob("*.json") if p.is_file())
+    if maps.maps:
+        all_content += " " + json.dumps(maps.maps)
     for name in declared:
-        if name in all_event_json or name in referenced:
+        if name in all_content:
             continue
         warnings.append(f'world variable "{name}" is declared but never referenced — export warning (not an error)')
 
@@ -281,11 +382,13 @@ def compile_game(slug: str, root: Path | None = None) -> dict[str, Any]:
             "packName": meta.get("packName", slug),
             "description": meta.get("description", ""),
             "version": meta.get("version", 1),
-            "start": meta.get("start", "start"),
+            "startMap": maps.start_map or meta.get("startMap"),
             "variables": registry.variables,
         },
-        "maps": maps,
-        "script": orch.get("actions", []),
+        "maps": {
+            "startMap": maps.start_map,
+            "maps": maps.maps,
+        },
     }
     (build_dir / "game.json").write_text(
         json.dumps(game_json, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -309,8 +412,9 @@ def compile_game(slug: str, root: Path | None = None) -> dict[str, Any]:
         "slug": slug,
         "buildDir": build_dir,
         "events": events_out,
-        "actions": len(orch.get("actions", [])),
         "variables": registry.variables,
+        "maps": list(maps.maps),
+        "startMap": maps.start_map,
         "errors": errors,
         "warnings": warnings,
     }

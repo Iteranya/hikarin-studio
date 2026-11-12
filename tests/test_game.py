@@ -43,20 +43,23 @@ def make_game(projects_root: Path, slug: str = "my-game") -> Path:
         ],
     }), encoding="utf-8")
 
-    (root / "world" / "map.orch").write_text(json.dumps({
-        "kind": "orch-graph",
-        "start": "n_meta",
-        "nodes": [
-            {"id": "n_meta", "verb": "meta", "fields": {"action": "start"}, "at": [0, 0]},
-            {"id": "n_label", "verb": "label", "fields": {"label": "start"}, "at": [0, 100]},
-            {"id": "n_run", "verb": "run_event", "fields": {"event": "hestia"}, "at": [0, 200]},
-            {"id": "n_end", "verb": "ending", "fields": {}, "at": [0, 300]},
-        ],
-        "wires": [
-            {"from": ["n_meta", "out"], "to": ["n_label", "in"]},
-            {"from": ["n_label", "out"], "to": ["n_run", "in"]},
-            {"from": ["n_run", "out"], "to": ["n_end", "in"]},
-        ],
+    (root / "world" / "maps.json").write_text(json.dumps({
+        "startMap": "home",
+        "maps": {
+            "home": {
+                "cols": 4,
+                "rows": 3,
+                "tiles": ["grass"] * 12,
+                "palette": {
+                    "grass": {"image": "asset/grass.png", "traversable": True},
+                    "wall": {"image": "asset/wall.png", "traversable": False},
+                },
+                "entities": [
+                    {"id": "statue", "kind": "static", "col": 1, "row": 1, "event": "hestia"},
+                ],
+                "spawn": {"col": 0, "row": 0, "facing": "down"},
+            },
+        },
     }), encoding="utf-8")
 
     (root / "project.json").write_text(json.dumps({
@@ -64,7 +67,7 @@ def make_game(projects_root: Path, slug: str = "my-game") -> Path:
         "packName": "My Game",
         "description": "test fixture",
         "version": 1,
-        "start": "start",
+        "startMap": "home",
     }), encoding="utf-8")
     return root
 
@@ -86,12 +89,10 @@ def test_game_json_contents(tmp_path: Path):
     game.compile_game("my-game", root=tmp_path)
     payload = json.loads((tmp_path / "my-game" / "build" / "game.json").read_text(encoding="utf-8"))
     assert payload["meta"]["packName"] == "My Game"
+    assert payload["meta"]["startMap"] == "home"
+    assert payload["maps"]["startMap"] == "home"
+    assert payload["maps"]["maps"]["home"]["spawn"] == {"col": 0, "row": 0, "facing": "down"}
     assert payload["meta"]["variables"][0]["name"] == "hestia_met"
-    assert payload["script"][0]["type"] == "meta"
-    types = [a["type"] for a in payload["script"]]
-    assert types == ["meta", "label", "run_event", "ending"]
-    ids = [a["id"] for a in payload["script"]]
-    assert ids == list(range(len(ids)))
 
 
 def test_event_output_is_valid_story_json(tmp_path: Path):
@@ -102,14 +103,34 @@ def test_event_output_is_valid_story_json(tmp_path: Path):
     assert [a["id"] for a in actions] == list(range(len(actions)))
 
 
-def test_unknown_event_is_an_error(tmp_path: Path):
+def test_unknown_entity_event_is_an_error(tmp_path: Path):
     root = make_game(tmp_path)
-    orch = json.loads((root / "world" / "map.orch").read_text(encoding="utf-8"))
-    orch["nodes"][2]["fields"] = {"event": "does_not_exist"}
-    (root / "world" / "map.orch").write_text(json.dumps(orch), encoding="utf-8")
+    raw = json.loads((root / "world" / "maps.json").read_text(encoding="utf-8"))
+    raw["maps"]["home"]["entities"][0]["event"] = "does_not_exist"
+    (root / "world" / "maps.json").write_text(json.dumps(raw), encoding="utf-8")
     report = game.compile_game("my-game", root=tmp_path)
     assert report["ok"] is False
     assert any("does_not_exist" in e for e in report["errors"])
+
+
+def test_map_tiles_must_fit_grid(tmp_path: Path):
+    root = make_game(tmp_path)
+    raw = json.loads((root / "world" / "maps.json").read_text(encoding="utf-8"))
+    raw["maps"]["home"]["tiles"] = ["grass"] * 5   # too short
+    (root / "world" / "maps.json").write_text(json.dumps(raw), encoding="utf-8")
+    report = game.compile_game("my-game", root=tmp_path)
+    assert report["ok"] is False
+    assert any("expected" in e for e in report["errors"])
+
+
+def test_unknown_tile_reference_is_an_error(tmp_path: Path):
+    root = make_game(tmp_path)
+    raw = json.loads((root / "world" / "maps.json").read_text(encoding="utf-8"))
+    raw["maps"]["home"]["tiles"][0] = "nope"
+    (root / "world" / "maps.json").write_text(json.dumps(raw), encoding="utf-8")
+    report = game.compile_game("my-game", root=tmp_path)
+    assert report["ok"] is False
+    assert any("unknown tile" in e for e in report["errors"])
 
 
 def test_duplicate_world_variable_is_an_error(tmp_path: Path):
@@ -132,30 +153,21 @@ def test_non_game_project_rejected(tmp_path: Path):
         game.compile_game("story", root=tmp_path)
 
 
-def test_conditional_false_target_resolves_to_id(tmp_path: Path):
-    root = make_game(tmp_path)
-    (root / "world" / "variables.json").write_text(json.dumps({
-        "variables": [{"name": "hestia_met", "type": "boolean", "default": False}],
-    }), encoding="utf-8")
-    (root / "world" / "map.orch").write_text(json.dumps({
-        "kind": "orch-graph",
-        "nodes": [
-            {"id": "a", "verb": "meta", "fields": {"action": "start"}, "at": [0, 0]},
-            {"id": "b", "verb": "conditional", "fields": {"condition": "equal", "var": "@world.hestia_met", "value": True}, "at": [0, 100]},
-            {"id": "c", "verb": "set_world", "fields": {"var": "@world.hestia_met", "value": True}, "at": [-200, 200]},
-            {"id": "d", "verb": "run_event", "fields": {"event": "hestia"}, "at": [0, 250]},
-        ],
-        "wires": [
-            {"from": ["a", "out"], "to": ["b", "in"]},
-            {"from": ["b", "true"], "to": ["d", "in"]},
-            {"from": ["b", "false"], "to": ["c", "in"]},
-        ],
-    }), encoding="utf-8")
-    report = game.compile_game("my-game", root=tmp_path)
-    assert report["ok"] is True
-    cond = next(a for a in json.loads((root / "build" / "game.json").read_text())["script"] if a["type"] == "conditional")
-    sw = next(a for a in json.loads((root / "build" / "game.json").read_text())["script"] if a["type"] == "set_world")
-    assert cond["end"] == sw["id"]
+def test_hikarin_map_block_compiles_flat(tmp_path: Path):
+    """A map switch is just a hikarin action; the compiler passes it through."""
+    from hikarin.blocks import BUILDERS
+    action = BUILDERS["mapSwitch"]({"map": "wastes", "x": 2, "y": 1, "facing": "left"})
+    assert action == {"type": "map", "action": "switch", "map": "wastes", "x": 2, "y": 1, "facing": "left"}
+
+
+def test_hikarin_map_block_roundtrip(tmp_path: Path):
+    from hikarin.blocks import block_from_action
+    block = block_from_action({"type": "map", "action": "switch", "map": "void", "x": 0, "y": 0})
+    assert block is not None
+    assert block["kind"] == "mapSwitch"
+    assert block["data"]["map"] == "void"
+    assert block["data"]["x"] == 0
+    assert block["data"]["y"] == 0
 
 
 def test_story_flow_still_exists(tmp_path: Path):

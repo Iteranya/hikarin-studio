@@ -1,50 +1,54 @@
 /* Hikarin Studio — Game editor.
  *
- * The game editor is what you see when the open project has kind === "game":
- * a node canvas (Route A full), a world-variable registry table, and an
- * export path straight to `build/game.json`. Events are nested hikarin
- * story projects — they are edited in the story editor as usual; this file
- * is only the world glue.
- *
- * State:
- *   file:      currently open .orch (name only, world/ scope)
- *   graph:     { kind, start, nodes: [...], wires: [...] }
- *   selection: { id } | { wire: index } | null
- *   transform: { x, y, zoom }
- *   dirty:     boolean
- *
- * Round-trip rule: node ids and `at` coordinates are preserved verbatim; the
- * compiler in hikarin/orchestrator.py canonicalises order and resolves ids.
+ * Visual surface for kind === "game" projects. The world IS hikarin: flags
+ * are @world.* variables, switching maps is a hikarin action (map → switch),
+ * and triggers are hikarin dialogue — this file owns the map grid painter
+ * and the shared-variable registry, nothing else. There is no secondary
+ * graph language and never will be.
  */
-
-
 
 const $ = (id) => document.getElementById(id);
 
 const state = {
-  project: null,          // { slug, meta }
+  project: null,
   worldFiles: [],
   events: [],
-  file: null,
-  graph: null,
-  selection: null,
-  transform: { x: 80, y: 40, zoom: 1 },
+  data: null,             // { startMap, maps: { slug: map } }
+  activeMapId: null,
+  cellSize: 32,
+  tool: 'tiles',          // tiles | entities | spawn
+  activeTileId: null,     // tile being painted
+  activeEntityIndex: null,
   dirty: false,
-  drag: null,             // active drag session
-  pendingWire: null,      // { from: [node, socket], mouse: {x,y} }
-  pan: null,
-  undo: [],
-  builtOnce: false,
+  imageCache: new Map(),  // url -> HTMLImageElement
 };
 
-// ── lifecycle ───────────────────────────────────────────────────────────────
+const DEFAULT_GRASS = 'grass';
+
+function defaultMap(id = 'home') {
+  const tiles = Array(16 * 16).fill(DEFAULT_GRASS);
+  return {
+    cols: 16,
+    rows: 16,
+    tiles,
+    palette: {
+      [DEFAULT_GRASS]: { image: 'asset/grass.png', traversable: true },
+    },
+    entities: [],
+    spawn: { col: 8, row: 8, facing: 'down' },
+  };
+}
+
+function defaultWorld() {
+  return { startMap: 'home', maps: { home: defaultMap('home') } };
+}
 
 export async function openGameEditor(project) {
   state.project = project;
   state.dirty = false;
-  state.selection = null;
-  state.builtOnce = false;
-  registryLoaded = false;          // registry must reload with each project
+  state.activeEntityIndex = null;
+  state.imageCache.clear();
+  registryLoaded = false;
   $('game-vars-tbody').innerHTML = '';
   $('game-build-status').textContent = 'not built';
   $('game-build-status').className = 'chip subtle';
@@ -53,14 +57,9 @@ export async function openGameEditor(project) {
   state.worldFiles = world.worldFiles ?? [];
   state.events = world.events ?? [];
 
-  // Pick the first .orch available (map.orch by convention).
-  const target = state.worldFiles.find((f) => f.endsWith('.orch')) ?? state.worldFiles.find((f) => f === 'map.orch') ?? state.worldFiles[0];
-  $('game-orch-pick').value = target ?? '(no world files)';
-  if (!target) {
-    $('game-nodes').innerHTML = '';
-    return;
-  }
-  await openOrchFile(target);
+  await loadMapsFile();
+  await loadVariablesEditor();
+  renderAll();
   wireGameChrome();
 }
 
@@ -68,48 +67,515 @@ export function closeGameEditor() {
   $('game-shell').hidden = true;
 }
 
-async function openOrchFile(name) {
-  state.file = name;
-  $('game-orch-pick').value = name;
-  const raw = await fetch(`/api/projects/${state.project.slug}/worldfile/${name}`).then((r) => {
-    if (!r.ok) throw new Error('worldfile read failed');
-    return r.text();
+// ── maps.json round-trip ──────────────────────────────────────────────────────
+
+async function loadMapsFile() {
+  let raw = null;
+  try {
+    const text = await fetch(`/api/projects/${state.project.slug}/worldfile/maps.json`).then((r) => (r.ok ? r.text() : null));
+    raw = text ? JSON.parse(text) : null;
+  } catch {
+    raw = null;
+  }
+  if (!raw || typeof raw !== 'object' || !raw.maps) raw = defaultWorld();
+  if (!raw.startMap) raw.startMap = Object.keys(raw.maps)[0];
+  state.data = raw;
+
+  for (const map of Object.values(raw.maps)) {
+    if (!map.palette) map.palette = { [DEFAULT_GRASS]: { image: 'asset/grass.png', traversable: true } };
+    if (!Array.isArray(map.tiles)) map.tiles = Array(map.cols * map.rows).fill(Object.keys(map.palette)[0]);
+    if (!map.entities) map.entities = [];
+    if (!map.spawn) map.spawn = { col: 0, row: 0, facing: 'down' };
+  }
+
+  if (!state.activeMapId || !raw.maps[state.activeMapId]) {
+    state.activeMapId = raw.startMap ?? Object.keys(raw.maps)[0];
+  }
+  if (!state.activeTileId) {
+    state.activeTileId = Object.keys(activeMap().palette)[0] ?? DEFAULT_GRASS;
+  }
+}
+
+function activeMap() {
+  return state.data.maps[state.activeMapId];
+}
+
+function mapsPayload() {
+  return JSON.stringify(state.data, null, 2) + '\n';
+}
+
+async function saveMapsFile() {
+  const res = await fetch(`/api/projects/${state.project.slug}/worldfile/maps.json`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: mapsPayload() }),
   });
-  state.graph = JSON.parse(raw);
-  state.dirty = false;
-  state.selection = null;
-  fitToContent(false); // silent initial fit but don't move
-  if (state.graph.nodes.length) fitToContent(true);
+  return res.ok;
+}
+
+async function saveAll() {
+  const [maps] = await Promise.all([saveMapsFile(), saveVariablesRegistry()]);
+  if (maps) {
+    state.dirty = false;
+    flashStatus('saved', 'chip subtle');
+    return true;
+  }
+  flashStatus('✕ save failed', 'chip');
+  return false;
+}
+
+function flashStatus(text, cls) {
+  const el = $('game-build-status');
+  el.textContent = text;
+  el.className = cls;
+}
+
+function markDirty() {
+  state.dirty = true;
+  $('game-build-status').textContent = 'unsaved';
+  $('game-build-status').className = 'chip';
+}
+
+// ── render ────────────────────────────────────────────────────────────────────
+
+function renderAll() {
+  renderMapList();
+  renderTileTray();
+  renderTileEditor();
+  renderEntityTray();
+  renderEntityEditor();
+  renderCanvas();
+  $('game-vars-count').textContent = `${$('game-vars-tbody').children.length} declared`;
+  $('game-map-name').textContent = `${state.activeMapId}${state.data.startMap === state.activeMapId ? ' ⬢ start' : ''}`;
+  const m = activeMap();
+  $('game-map-dims').textContent = `${m.cols}×${m.rows} · spawn (${m.spawn.col},${m.spawn.row}) ${m.spawn.facing}`;
+  $('game-map-zoom-label').textContent = `${state.cellSize}px`;
+}
+
+function renderMapList() {
+  const list = $('game-map-list');
+  const maps = state.data.maps;
+  list.innerHTML = Object.keys(maps).map((id) => {
+    const map = maps[id];
+    const active = id === state.activeMapId ? ' active' : '';
+    const star = id === state.data.startMap ? ' ⬢' : '';
+    return `<button class="game-map-item${active}" data-map="${escapeHtml(id)}">
+      <span class="game-map-item-name">${escapeHtml(id)}${star}</span>
+      <span class="game-map-item-dims">${map.cols}×${map.rows}</span>
+    </button>`;
+  }).join('');
+  list.querySelectorAll('.game-map-item').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.activeMapId = btn.dataset.map;
+      state.activeEntityIndex = null;
+      state.activeTileId = Object.keys(activeMap().palette)[0] ?? state.activeTileId;
+      renderAll();
+    });
+    btn.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      setStartMap(btn.dataset.map);
+    });
+  });
+}
+
+function renderTileTray() {
+  const tray = $('game-tile-tray');
+  const palette = activeMap().palette;
+  if (!Object.keys(palette).length) {
+    tray.innerHTML = '<div class="game-map-hint">No tiles yet — press ＋ Tile.</div>';
+    return;
+  }
+  tray.innerHTML = Object.keys(palette).map((id) => {
+    const entry = palette[id];
+    const url = tileImageUrl(entry.image);
+    const active = id === state.activeTileId ? ' active' : '';
+    return `<button class="game-tile-chip${active}" data-tile="${escapeHtml(id)}" title="${escapeHtml(entry.image)}">
+      ${url ? `<img src="${url}" alt="">` : '<span>?</span>'}
+      <span>${escapeHtml(id)}</span>
+      <span class="tile-trav">${entry.traversable ? '↔' : '■'}</span>
+    </button>`;
+  }).join('');
+  tray.querySelectorAll('.game-tile-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      state.activeTileId = chip.dataset.tile;
+      renderAll();
+    });
+  });
+}
+
+function renderTileEditor() {
+  const palette = activeMap().palette;
+  const entry = palette[state.activeTileId];
+  $('game-tile-id').value = state.activeTileId ?? '';
+  $('game-tile-image').value = entry?.image ?? '';
+  $('game-tile-trav').checked = Boolean(entry?.traversable);
+}
+
+function tileImageUrl(image) {
+  if (!image) return '';
+  const rel = image.replace(/^images\//, '');
+  const encoded = rel.split('/').map(encodeURIComponent).join('/');
+  return `/api/projects/${encodeURIComponent(state.project.slug)}/assets/${encoded}`;
+}
+
+function renderEntityTray() {
+  const tray = $('game-entity-tray');
+  const entities = activeMap().entities ?? [];
+  if (!entities.length) {
+    tray.innerHTML = '<div class="game-map-hint">No entities — press ＋ Place, then click the grid.</div>';
+    return;
+  }
+  tray.innerHTML = entities.map((e, i) => {
+    const active = i === state.activeEntityIndex ? ' active' : '';
+    const pos = e.kind === 'static' ? `(${e.col},${e.row})` : 'global';
+    return `<button class="game-entity-chip${active}" data-index="${i}"><span>${escapeHtml(e.id ?? '?')}</span><span class="tile-trav">${pos}</span></button>`;
+  }).join('');
+  tray.querySelectorAll('.game-entity-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      state.activeEntityIndex = Number(chip.dataset.index);
+      renderAll();
+    });
+  });
+}
+
+function renderEntityEditor() {
+  const entities = activeMap().entities ?? [];
+  const e = entities[state.activeEntityIndex];
+  $('game-entity-kind').value = e?.kind ?? 'static';
+  $('game-entity-id').value = e?.id ?? '';
+  $('game-entity-event').innerHTML = ['<option value="">— event…</option>']
+    .concat(state.events.map((ev) => `<option value="${escapeHtml(ev)}"${e?.event === ev ? ' selected' : ''}>${escapeHtml(ev)}</option>`))
+    .join('');
+  $('game-entity-col').value = e?.col ?? '';
+  $('game-entity-row').value = e?.row ?? '';
+  $('game-entity-vis').value = e?.visible_if ?? '';
+  $('game-entity-interact').value = e?.interact_if ?? '';
+  $('game-entity-attach').value = e?.attach ?? '';
+  const isStatic = (e?.kind ?? 'static') === 'static';
+  $('game-entity-col').style.display = isStatic ? '' : 'none';
+  $('game-entity-row').style.display = isStatic ? '' : 'none';
+  $('game-entity-attach').style.display = isStatic ? 'none' : '';
+}
+
+// ── canvas ────────────────────────────────────────────────────────────────────
+
+function renderCanvas() {
+  const canvas = $('game-map-canvas');
+  const m = activeMap();
+  const size = state.cellSize;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = m.cols * size * dpr;
+  canvas.height = m.rows * size * dpr;
+  canvas.style.width = `${m.cols * size}px`;
+  canvas.style.height = `${m.rows * size}px`;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  ctx.clearRect(0, 0, m.cols * size, m.rows * size);
+  ctx.fillStyle = '#090b10';
+  ctx.fillRect(0, 0, m.cols * size, m.rows * size);
+
+  for (let row = 0; row < m.rows; row++) {
+    for (let col = 0; col < m.cols; col++) {
+      const tileId = m.tiles[row * m.cols + col];
+      const entry = m.palette[tileId];
+      if (!entry) continue;
+      drawTileCell(ctx, tileId, entry, col * size, row * size, size);
+    }
+  }
+
+  ctx.strokeStyle = 'rgba(127,134,152,0.25)';
+  ctx.lineWidth = 1;
+  for (let c = 0; c <= m.cols; c++) { ctx.beginPath(); ctx.moveTo(c * size + .5, 0); ctx.lineTo(c * size + .5, m.rows * size); ctx.stroke(); }
+  for (let r = 0; r <= m.rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * size + .5); ctx.lineTo(m.cols * size, r * size + .5); ctx.stroke(); }
+
+  drawMarker(ctx, m.spawn.col, m.spawn.row, size, '🚶', '#38bdf8');
+
+  (m.entities ?? []).forEach((entity, i) => {
+    if (entity.kind !== 'static' || entity.col === undefined) return;
+    const selected = i === state.activeEntityIndex;
+    drawMarker(ctx, entity.col, entity.row, size, 'E', selected ? '#a78bfa' : '#818cf8', selected);
+  });
+}
+
+function drawTileCell(ctx, tileId, entry, x, y, size) {
+  const url = tileImageUrl(entry.image);
+  const img = state.imageCache.get(url);
+  if (img && img.complete && img.naturalWidth) {
+    ctx.drawImage(img, x, y, size, size);
+    return;
+  }
+  if (url && !state.imageCache.has(url)) {
+    const image = new Image();
+    image.src = url;
+    image.onload = () => renderCanvas();
+    image.onerror = () => renderCanvas();
+    state.imageCache.set(url, image);
+  }
+  ctx.fillStyle = hashHue(tileId);
+  ctx.fillRect(x, y, size, size);
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.font = `${Math.floor(size / 2)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(tileId.slice(0, 1).toUpperCase(), x + size / 2, y + size / 2 + 1);
+}
+
+function drawMarker(ctx, col, row, size, glyph, color, strong = false) {
+  const x = col * size, y = row * size;
+  ctx.save();
+  ctx.fillStyle = strong ? color : `${color}55`;
+  ctx.fillRect(x + 1, y + 1, size - 2, size - 2);
+  ctx.fillStyle = '#0d0f14';
+  ctx.font = `${Math.floor(size * 0.62)}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(glyph, x + size / 2, y + size / 2 + 1);
+  ctx.restore();
+}
+
+function hashHue(key) {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) & 0xffff;
+  return `hsl(${h % 360} 40% 30%)`;
+}
+
+function cellFromEvent(ev) {
+  const canvas = $('game-map-canvas');
+  const rect = canvas.getBoundingClientRect();
+  const m = activeMap();
+  const x = ev.clientX - rect.left;
+  const y = ev.clientY - rect.top;
+  const col = Math.floor(x / state.cellSize);
+  const row = Math.floor(y / state.cellSize);
+  if (col < 0 || row < 0 || col >= m.cols || row >= m.rows) return null;
+  return { col, row };
+}
+
+function paintAt(col, row) {
+  const m = activeMap();
+  if (state.tool === 'tiles') {
+    const tileId = state.activeTileId ?? Object.keys(m.palette)[0];
+    if (!tileId) return;
+    m.tiles[row * m.cols + col] = tileId;
+  } else if (state.tool === 'entities') {
+    placeEntityAt(col, row);
+    return;
+  } else if (state.tool === 'spawn') {
+    m.spawn.col = col;
+    m.spawn.row = row;
+  }
+  markDirty();
   renderAll();
 }
 
-// ── save / validate / export ────────────────────────────────────────────────
+function pickTileAt(col, row) {
+  const m = activeMap();
+  state.activeTileId = m.tiles[row * m.cols + col];
+  renderAll();
+}
 
-async function saveWorldFile() {
-  if (!state.graph) return;
-  state.graph.start = state.graph.nodes.find((n) => n.verb === 'meta')?.id ?? state.graph.start;
-  const payload = JSON.stringify(state.graph, null, 2) + '\n';
-  const [res] = await Promise.all([
-    fetch(`/api/projects/${state.project.slug}/worldfile/${state.file}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: payload }),
-    }),
-    saveVariablesRegistry(),
-  ]);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    flashStatus(`✕ ${err.detail ?? 'save failed'}`, 'chip');
-    return false;
+function placeEntityAt(col, row) {
+  const entities = activeMap().entities;
+  if (state.activeEntityIndex !== null && entities[state.activeEntityIndex]) {
+    entities[state.activeEntityIndex].col = col;
+    entities[state.activeEntityIndex].row = row;
+  } else {
+    entities.push({ id: `entity_${entities.length + 1}`, kind: 'static', col, row, event: state.events[0] ?? '' });
+    state.activeEntityIndex = entities.length - 1;
   }
-  state.dirty = false;
-  flashStatus('saved', 'chip subtle');
-  return true;
+  markDirty();
+  renderAll();
+}
+
+// ── entity + spawn editing ────────────────────────────────────────────────────
+
+function wireEntityEditor() {
+  if ($('game-entity-kind').__wired) return;
+  $('game-entity-kind').__wired = true;
+  $('game-entity-kind').addEventListener('change', (e) => {
+    const entities = activeMap().entities;
+    const ent = entities[state.activeEntityIndex];
+    if (!ent) return;
+    ent.kind = e.target.value;
+    if (ent.kind !== 'static') { delete ent.col; delete ent.row; }
+    markDirty(); renderAll();
+  });
+  $('game-entity-id').addEventListener('change', (e) => {
+    const entities = activeMap().entities;
+    if (entities[state.activeEntityIndex]) { entities[state.activeEntityIndex].id = e.target.value.trim(); markDirty(); renderAll(); }
+  });
+  $('game-entity-event').addEventListener('change', (e) => {
+    const entities = activeMap().entities;
+    if (entities[state.activeEntityIndex]) { entities[state.activeEntityIndex].event = e.target.value; markDirty(); renderAll(); }
+  });
+  $('game-entity-col').addEventListener('change', (e) => {
+    const entities = activeMap().entities;
+    if (entities[state.activeEntityIndex]) { entities[state.activeEntityIndex].col = clampInt(e.target.value, 0, activeMap().cols - 1); markDirty(); renderAll(); }
+  });
+  $('game-entity-row').addEventListener('change', (e) => {
+    const entities = activeMap().entities;
+    if (entities[state.activeEntityIndex]) { entities[state.activeEntityIndex].row = clampInt(e.target.value, 0, activeMap().rows - 1); markDirty(); renderAll(); }
+  });
+  $('game-entity-vis').addEventListener('change', (e) => {
+    const entities = activeMap().entities;
+    if (entities[state.activeEntityIndex]) { entities[state.activeEntityIndex].visible_if = e.target.value.trim(); markDirty(); }
+  });
+  $('game-entity-interact').addEventListener('change', (e) => {
+    const entities = activeMap().entities;
+    if (entities[state.activeEntityIndex]) { entities[state.activeEntityIndex].interact_if = e.target.value.trim(); markDirty(); }
+  });
+  $('game-entity-attach').addEventListener('change', (e) => {
+    const entities = activeMap().entities;
+    if (entities[state.activeEntityIndex]) { entities[state.activeEntityIndex].attach = e.target.value.trim(); markDirty(); }
+  });
+  $('game-entity-delete').addEventListener('click', () => {
+    const entities = activeMap().entities;
+    if (state.activeEntityIndex !== null && entities[state.activeEntityIndex]) {
+      entities.splice(state.activeEntityIndex, 1);
+      state.activeEntityIndex = null;
+      markDirty(); renderAll();
+    }
+  });
+}
+
+function clampInt(raw, lo, hi) {
+  const v = Math.round(Number(raw));
+  if (Number.isNaN(v)) return lo;
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function setStartMap(id) {
+  if (!state.data.maps[id]) return;
+  if (state.data.startMap === id) delete state.data.startMap;
+  else state.data.startMap = id;
+  markDirty();
+  renderAll();
+}
+
+// ── tile editing ──────────────────────────────────────────────────────────────
+
+function wireTileEditor() {
+  if ($('game-tile-add').__wired) return;
+  $('game-tile-add').__wired = true;
+  $('game-tile-add').addEventListener('click', () => {
+    const palette = activeMap().palette;
+    let i = Object.keys(palette).length + 1;
+    let id = `tile_${i}`;
+    while (palette[id]) { i += 1; id = `tile_${i}`; }
+    palette[id] = { image: 'asset/tile.png', traversable: true };
+    state.activeTileId = id;
+    markDirty(); renderAll();
+  });
+  $('game-tile-id').addEventListener('change', (e) => renameActiveTile(e.target.value.trim()));
+  $('game-tile-image').addEventListener('change', (e) => {
+    const entry = activeMap().palette[state.activeTileId];
+    if (entry) { entry.image = e.target.value.trim() || entry.image; markDirty(); renderAll(); }
+  });
+  $('game-tile-trav').addEventListener('change', (e) => {
+    const entry = activeMap().palette[state.activeTileId];
+    if (entry) { entry.traversable = e.target.checked; markDirty(); renderAll(); }
+  });
+}
+
+function renameActiveTile(newId) {
+  if (!newId) return;
+  const palette = activeMap().palette;
+  if (palette[newId] || newId === state.activeTileId) { renderTileEditor(); return; }
+  palette[newId] = palette[state.activeTileId];
+  delete palette[state.activeTileId];
+  activeMap().tiles = activeMap().tiles.map((t) => (t === state.activeTileId ? newId : t));
+  state.activeTileId = newId;
+  markDirty(); renderAll();
+}
+
+// ── chrome ────────────────────────────────────────────────────────────────────
+
+function wireGameChrome() {
+  // tool tabs
+  document.querySelectorAll('.game-map-tab').forEach((btn) => {
+    if (btn.__wired) return;
+    btn.__wired = true;
+    btn.addEventListener('click', () => {
+      state.tool = btn.dataset.tool;
+      renderToolTabs();
+    });
+  });
+
+  // canvas interactions
+  const canvas = $('game-map-canvas');
+  if (!canvas.__wired) {
+    canvas.__wired = true;
+    canvas.addEventListener('pointerdown', (ev) => {
+      const cell = cellFromEvent(ev);
+      if (!cell) return;
+      if (ev.button === 2) { pickTileAt(cell.col, cell.row); return; }
+      paintAt(cell.col, cell.row);
+      const move = (e) => { const c = cellFromEvent(e); if (c) paintAt(c.col, c.row); };
+      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+    canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
+  }
+
+  $('game-map-zoom-in').onclick = () => { state.cellSize = Math.min(64, state.cellSize + 8); renderAll(); };
+  $('game-map-zoom-out').onclick = () => { state.cellSize = Math.max(16, state.cellSize - 8); renderAll(); };
+
+  $('game-map-add').onclick = () => {
+    const id = prompt('Map id (lowercase, no spaces)', 'wastes');
+    if (!id) return;
+    if (state.data.maps[id]) { alert('That map id already exists.'); return; }
+    state.data.maps[id] = defaultMap(id);
+    state.activeMapId = id;
+    if (!state.data.startMap) state.data.startMap = id;
+    markDirty(); renderAll();
+  };
+
+  $('game-entity-add').onclick = () => { state.tool = 'entities'; state.activeEntityIndex = null; renderToolTabs(); };
+
+  [['up', 'game-spawn-up'], ['down', 'game-spawn-down'], ['left', 'game-spawn-left'], ['right', 'game-spawn-right']].forEach(([facing, id]) => {
+    $(id).onclick = () => { activeMap().spawn.facing = facing; markDirty(); renderAll(); };
+  });
+
+  wireEntityEditor();
+  wireTileEditor();
+
+  $('game-save').onclick = () => saveAll();
+  $('game-validate').onclick = () => validateBuild();
+  $('game-export').onclick = () => exportBuild();
+
+  document.querySelectorAll('.game-tab').forEach((tab) => {
+    if (tab.__wired) return;
+    tab.__wired = true;
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.game-tab').forEach((t) => t.classList.toggle('active', t === tab));
+      const isMap = tab.dataset.tab === 'map';
+      $('game-map-pane').hidden = !isMap;
+      $('game-vars-pane').hidden = isMap;
+      $('game-inspector-body').innerHTML = isMap
+        ? '<div class="empty-hint">Paint tiles · place entities · set spawn.</div>'
+        : '<div class="empty-hint">Edit the registry rows on the left. Name, type, default, description.</div>';
+    });
+  });
+
+  window.addEventListener('keydown', (ev) => {
+    if ($('game-shell').hidden) return;
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') { ev.preventDefault(); saveAll(); }
+    if (ev.key === 'Escape') { state.activeEntityIndex = null; renderAll(); }
+  });
+}
+
+function renderToolTabs() {
+  document.querySelectorAll('.game-map-tab').forEach((b) => b.classList.toggle('active', b.dataset.tool === state.tool));
+  $('game-tool-tiles').hidden = state.tool !== 'tiles';
+  $('game-tool-entities').hidden = state.tool !== 'entities';
+  $('game-tool-spawn').hidden = state.tool !== 'spawn';
 }
 
 async function validateBuild() {
   flashStatus('building…', 'chip subtle');
-  await saveWorldFile();
+  await saveAll();
   const res = await fetch(`/api/projects/${state.project.slug}/export?format=game`);
   const body = await res.text();
   if (!res.ok) {
@@ -126,503 +592,11 @@ async function validateBuild() {
 }
 
 async function exportBuild() {
-  await saveWorldFile();
-  window.location = `/api/projects/${state.project.slug}/export?format=game`;
+  const ok = await saveAll();
+  if (ok) window.location = `/api/projects/${state.project.slug}/export?format=game`;
 }
 
-function flashStatus(text, cls) {
-  const el = $('game-build-status');
-  el.textContent = text;
-  el.className = cls;
-}
-
-// ── nodes ──────────────────────────────────────────────────────────────────
-
-const NODE_WIDTH = 200;
-
-function nodeHeight(n) {
-  const rows = Object.keys(fieldsFor(n)).length;
-  return 34 /* header */ + rows * 24 /* rows */ + 14 /* padding */
-    + (n.verb === 'conditional' ? 34 : 0) /* true/false labels */;
-}
-
-function familyOf(verb) {
-  switch (verb) {
-    case 'meta': case 'label': case 'jump': case 'conditional': return 'flow';
-    case 'map': case 'entity': return 'world';
-    case 'run_event': return 'event';
-    case 'set_world': case 'save': return 'state';
-    case 'ending': return 'end';
-    default: return 'flow';
-  }
-}
-
-function fieldsFor(n) {
-  const f = n.fields ?? {};
-  switch (n.verb) {
-    case 'meta':        return {};
-    case 'label':       return { label: f.label ?? '' };
-    case 'jump':        return { label: f.label ?? '' };
-    case 'conditional': return { condition: f.condition ?? 'equal', var: f.var ?? '', value: f.value ?? '' };
-    case 'map':         return { map: f.map ?? '', x: f.x ?? 0, y: f.y ?? 0 };
-    case 'entity':      return { entity: f.entity ?? '' };
-    case 'run_event':   return { event: f.event ?? '' };
-    case 'set_world':   return { var: f.var ?? '', value: f.value ?? '' };
-    case 'save':        return {};
-    case 'ending':      return {};
-    default:            return {};
-  }
-}
-
-const VERB_HINT = {
-  meta: 'Entry point. Exactly one per game.',
-  label: 'Label target for jumps.',
-  jump: 'Unconditional control transfer.',
-  conditional: 'Route selector: picks which event to dispatch. Blocking lives inside the event.',
-  map: 'Load a map by id; x/y = player cell.',
-  entity: 'Arm an interact handoff.',
-  run_event: 'Run a compiled event (hikarin spine). The orchestrator resumes when it returns.',
-  set_world: 'Write @world.* — the only world mutation channel.',
-  save: 'Flush the profile now.',
-  ending: 'Terminal. Engine halts.',
-};
-
-function addNode(verb, at = null) {
-  const id = freshNodeId();
-  const node = {
-    id,
-    verb,
-    fields: defaultFields(verb),
-    at: at ?? [Math.round((-state.transform.x + 200) / state.transform.zoom), Math.round((-state.transform.y + 120) / state.transform.zoom)],
-  };
-  state.graph.nodes.push(node);
-  if (verb === 'meta') state.graph.start = id;
-  selectNode(id);
-  renderAll();
-  markDirty();
-}
-
-function freshNodeId() {
-  let n = Date.now().toString(36).slice(-4);
-  while (state.graph?.nodes.some((x) => x.id === `n_${n}`)) n = ((Math.random() * 0xffff) | 0).toString(16);
-  return `n_${n}`;
-}
-
-function defaultFields(verb) {
-  switch (verb) {
-    case 'label': return { label: '' };
-    case 'jump': return { label: '' };
-    case 'conditional': return { condition: 'equal', var: '@world.', value: '' };
-    case 'map': return { map: '', x: 0, y: 0 };
-    case 'entity': return { entity: '' };
-    case 'run_event': return { event: state.events?.[0] ?? '' };
-    case 'set_world': return { var: '@world.', value: 'true' };
-    default: return {};
-  }
-}
-
-function deleteNode(id) {
-  state.graph.nodes = state.graph.nodes.filter((n) => n.id !== id);
-  state.graph.wires = state.graph.wires.filter((w) => w.from[0] !== id && w.to[0] !== id);
-  if (state.selection?.id === id) state.selection = null;
-  renderAll();
-  markDirty();
-}
-
-function renderAll() {
-  renderNodes();
-  renderWires();
-  renderInspector();
-  $('game-vars-count').textContent = `${$('game-vars-tbody').children.length} declared`;
-}
-
-function renderNodes() {
-  const layer = $('game-nodes');
-  layer.innerHTML = '';
-  for (const n of state.graph.nodes) {
-    const el = document.createElement('div');
-    el.className = `game-node fam-${familyOf(n.verb)}${isSelected(n) ? ' selected' : ''}`;
-    el.style.left = `${n.at[0]}px`;
-    el.style.top = `${n.at[1]}px`;
-    el.dataset.id = n.id;
-    el.innerHTML = `
-      <div class="game-node-head"><span class="game-node-verb">${verbLabel(n.verb)}</span><span class="game-node-badge">${n.id}</span></div>
-      <div class="game-node-body">${bodyHtml(n)}</div>
-      <div class="game-node-sockets">${socketsHtml(n)}</div>`;
-    layer.appendChild(el);
-    wireNodeEvents(el, n);
-  }
-}
-
-function verbLabel(verb) {
-  return {
-    meta: 'Meta · start',
-    label: 'Label',
-    jump: 'Jump',
-    conditional: 'If',
-    map: 'Load map',
-    entity: 'Entity',
-    run_event: 'Run event',
-    set_world: 'Set world',
-    save: 'Save',
-    ending: 'Ending',
-  }[verb] ?? verb;
-}
-
-function bodyHtml(n) {
-  const fields = fieldsFor(n);
-  const rows = [];
-  for (const [key, value] of Object.entries(fields)) {
-    rows.push(`<div class="game-node-row"><label>${key}</label><div class="game-node-field" data-key="${key}">${escapeHtml(String(value))}</div></div>`);
-  }
-  return rows.join('') || '<div class="game-node-row"><span class="game-field-hint">no fields</span></div>';
-}
-
-function socketsHtml(n) {
-  const out = [];
-  if (n.verb === 'conditional') {
-    out.push(`<div class="game-port out true" data-port="true" title="condition true"></div><div class="game-port-label">true</div>`);
-    out.push(`<div class="game-port out false" data-port="false" title="condition false"></div><div class="game-port-label false">false</div>`);
-  } else if (n.verb !== 'jump' && n.verb !== 'ending') {
-    out.push(`<div class="game-port out" data-port="out" title="continue"></div>`);
-  }
-  if (n.verb !== 'meta') out.push(`<div class="game-port in" data-port="in" title="input"></div>`);
-  return out.join('');
-}
-
-function escapeHtml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-}
-
-function isSelected(n) {
-  return state.selection && state.selection.id === n.id;
-}
-
-function selectNode(id) {
-  state.selection = { id };
-  renderAll();
-}
-
-function wireNodeEvents(el, n) {
-  el.addEventListener('pointerdown', (ev) => {
-    if (ev.target.closest('.game-port')) return;
-    ev.preventDefault();
-    selectNode(n.id);
-    const startX = ev.clientX, startY = ev.clientY;
-    const originX = n.at[0], originY = n.at[1];
-    const move = (e) => {
-      const dx = (e.clientX - startX) / state.transform.zoom;
-      const dy = (e.clientY - startY) / state.transform.zoom;
-      n.at = [Math.round(originX + dx), Math.round(originY + dy)];
-      el.style.left = `${n.at[0]}px`;
-      el.style.top = `${n.at[1]}px`;
-      renderWires();
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      markDirty();
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  });
-
-  el.querySelectorAll('.game-port').forEach((port) => {
-    port.addEventListener('pointerdown', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const socket = port.dataset.port;
-      const isOut = port.classList.contains('out');
-      if (!isOut) return; // wires start from outlets only
-      state.pendingWire = { from: [n.id, socket], mouse: { x: ev.clientX, y: ev.clientY } };
-      $('game-canvas').classList.add('wiring');
-      const move = (e) => {
-        state.pendingWire.mouse = { x: e.clientX, y: e.clientY };
-        renderWires();
-      };
-      const up = (e) => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', up);
-        $('game-canvas').classList.remove('wiring');
-        const target = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.game-port.in');
-        if (target) {
-          const targetNodeEl = target.closest('.game-node');
-          const targetNodeId = targetNodeEl?.dataset.id;
-          if (targetNodeId && targetNodeId !== n.id) {
-            state.graph.wires.push({ from: [n.id, socket], to: [targetNodeId, 'in'] });
-            markDirty();
-          }
-        }
-        state.pendingWire = null;
-        renderAll();
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', up);
-    });
-  });
-}
-
-// ── wires ───────────────────────────────────────────────────────────────────
-
-function portWorldPosition(nodeId, socket) {
-  const n = state.graph.nodes.find((x) => x.id === nodeId);
-  if (!n) return { x: 0, y: 0 };
-  const el = $('game-nodes').querySelector(`[data-id="${nodeId}"]`);
-  const baseY = n.at[1];
-  if (!el) return { x: n.at[0] + NODE_WIDTH, y: baseY };
-  const port = el.querySelector(`.game-port[data-port="${socket}"]`);
-  if (!port) return { x: n.at[0] + NODE_WIDTH, y: baseY };
-  return { x: n.at[0] + port.offsetLeft + 6, y: n.at[1] + port.offsetTop + 6 };
-}
-
-function renderWires() {
-  const svg = $('game-wires');
-  const wires = state.graph.wires.map((w, i) => ({ w, i }));
-  const parts = [];
-  for (const { w, i } of wires) {
-    const from = portWorldPosition(w.from[0], w.from[1]);
-    const to = portWorldPosition(w.to[0], 'in');
-    const mid = Math.max(40, Math.abs(to.x - from.x) / 2);
-    const d = `M ${from.x} ${from.y} C ${from.x + mid} ${from.y}, ${to.x - mid} ${to.y}, ${to.x} ${to.y}`;
-    const sel = state.selection?.wire === i ? ' selected' : '';
-    parts.push(`<path class="game-wire${sel}" data-index="${i}" d="${d}"/>`);
-  }
-  if (state.pendingWire) {
-    const from = portWorldPosition(state.pendingWire.from[0], state.pendingWire.from[1]);
-    const mouse = screenToWorld(state.pendingWire.mouse.x, state.pendingWire.mouse.y);
-    const mid = Math.max(40, Math.abs(mouse.x - from.x) / 2);
-    const d = `M ${from.x} ${from.y} C ${from.x + mid} ${from.y}, ${mouse.x - mid} ${mouse.y}, ${mouse.x} ${mouse.y}`;
-    parts.push(`<path class="game-wire pending" d="${d}"/>`);
-  }
-  svg.innerHTML = parts.join('');
-  svg.querySelectorAll('.game-wire[data-index]').forEach((p) => {
-    p.addEventListener('pointerdown', (ev) => {
-      ev.stopPropagation();
-      const i = Number(p.dataset.index);
-      state.selection = { wire: i };
-      renderAll();
-    });
-  });
-}
-
-function screenToWorld(clientX, clientY) {
-  const rect = $('game-canvas').getBoundingClientRect();
-  return {
-    x: (clientX - rect.left - state.transform.x) / state.transform.zoom,
-    y: (clientY - rect.top - state.transform.y) / state.transform.zoom,
-  };
-}
-
-// ── inspector ───────────────────────────────────────────────────────────────
-
-function renderInspector() {
-  const body = $('game-inspector-body');
-  const selection = state.selection;
-  if (selection && selection.id != null) {
-    const n = state.graph.nodes.find((x) => x.id === selection.id);
-    if (!n) { body.innerHTML = '<div class="empty-hint">Node gone.</div>'; return; }
-    body.innerHTML = inspectorHtml(n);
-    wireInspector(body, n);
-    return;
-  }
-  if (selection && selection.wire != null) {
-    body.innerHTML = `<div class="empty-hint">Wire selected — press Delete to remove.</div>`;
-    return;
-  }
-  body.innerHTML = '<div class="empty-hint">Select a node to edit it.</div>';
-}
-
-function inspectorHtml(n) {
-  const fields = fieldsFor(n);
-  const rows = [];
-  for (const [key, value] of Object.entries(fields)) {
-    if (n.verb === 'conditional' && key === 'condition') {
-      rows.push(`<div class="game-field"><label>condition</label>
-        <select data-field="condition">${CONDITION_OPTIONS.map((c) => `<option value="${c}"${value === c ? ' selected' : ''}>${c}</option>`).join('')}</select></div>`);
-    } else {
-      rows.push(`<div class="game-field"><label>${key}</label><input data-field="${key}" value="${escapeHtml(String(value))}"></div>`);
-    }
-  }
-  rows.push(`<div class="game-field-hint">${VERB_HINT[n.verb] ?? ''}</div>`);
-  rows.push(`<button class="game-node-delete" id="game-delete-node">Delete node</button>`);
-  return rows.join('');
-}
-
-const CONDITION_OPTIONS = ['equal', 'not_equal', 'greater_than', 'less_than', 'greater_or_equal', 'less_or_equal', 'exists', 'not_exists', 'day', 'night'];
-
-function wireInspector(body, n) {
-  body.querySelectorAll('[data-field]').forEach((input) => {
-    const key = input.dataset.field;
-    input.addEventListener('change', () => {
-      let value = input.value;
-      if (key === 'x' || key === 'y') value = Number(value) || 0;
-      if (n.verb === 'set_world' && key === 'value') value = parsePrimitive(value);
-      n.fields[key] = value;
-      markDirty();
-      renderAll();
-    });
-  });
-  body.querySelector('#game-delete-node')?.addEventListener('click', () => deleteNode(n.id));
-}
-
-function parsePrimitive(raw) {
-  const t = String(raw).trim();
-  if (t === 'true') return true;
-  if (t === 'false') return false;
-  if (t !== '' && !Number.isNaN(Number(t))) return Number(t);
-  return t;
-}
-
-function markDirty() {
-  state.dirty = true;
-  $('game-build-status').textContent = 'unsaved';
-  $('game-build-status').className = 'chip';
-}
-
-// ── canvas chrome ───────────────────────────────────────────────────────────
-
-function wireGameChrome() {
-  const canvas = $('game-canvas');
-
-  $('game-save').onclick = () => saveWorldFile();
-  $('game-validate').onclick = () => validateBuild();
-  $('game-export').onclick = () => exportBuild();
-
-  $('game-zoom-in').onclick = () => zoomBy(1.2);
-  $('game-zoom-out').onclick = () => zoomBy(1 / 1.2);
-  $('game-zoom-fit').onclick = () => fitToContent(true);
-
-  $('game-add-node').addEventListener('change', (ev) => {
-    const verb = ev.target.value;
-    if (verb) addNode(verb);
-    ev.target.value = '';
-  });
-
-  // tab switching
-  document.querySelectorAll('.game-tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.game-tab').forEach((t) => t.classList.toggle('active', t === tab));
-      $('game-flow-pane').hidden = tab.dataset.tab !== 'flow';
-      $('game-vars-pane').hidden = tab.dataset.tab !== 'vars';
-      $('game-inspector-body').innerHTML = tab.dataset.tab === 'vars'
-        ? '<div class="empty-hint">Edit the registry rows on the left. Name, type, default, description.</div>'
-        : '<div class="empty-hint">Select a node to edit it.</div>';
-    });
-  });
-
-  // variables table
-  $('game-vars-add').addEventListener('click', () => addVariableRow());
-  loadVariablesEditor();
-
-  // canvas interactions
-  canvas.addEventListener('wheel', (ev) => {
-    ev.preventDefault();
-    zoomBy(ev.deltaY < 0 ? 1.1 : 1 / 1.1, { x: ev.clientX, y: ev.clientY });
-  }, { passive: false });
-
-  canvas.addEventListener('pointerdown', (ev) => {
-    const onNode = ev.target.closest('.game-node');
-    const onPort = ev.target.closest('.game-port');
-    const onStage = !onNode && !onPort;
-    if (ev.button === 1 || ev.button === 2 || (ev.button === 0 && onStage && ev.target.closest('.game-wires'))) {
-      startPan(ev);
-    } else if (ev.button === 0 && onStage) {
-      // click empty canvas: clear selection
-      state.selection = null;
-      renderAll();
-      startPan(ev);
-    }
-  });
-
-  canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
-
-  window.addEventListener('keydown', (ev) => {
-    if ($('game-shell').hidden) return;
-    const targetIsInput = ev.target.closest?.('input, textarea, select');
-    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') {
-      ev.preventDefault();
-      saveWorldFile();
-    }
-    if (targetIsInput) return;
-    if (ev.key === 'Delete' || ev.key === 'Backspace') {
-      ev.preventDefault();
-      if (state.selection?.id != null) deleteNode(state.selection.id);
-      else if (state.selection?.wire != null) {
-        state.graph.wires.splice(state.selection.wire, 1);
-        state.selection = null;
-        renderAll();
-        markDirty();
-      }
-    }
-    if (ev.key === 'f' && !ev.ctrlKey && !ev.metaKey) fitToContent(true);
-  });
-}
-
-function startPan(ev) {
-  ev.preventDefault();
-  $('game-canvas').classList.add('panning');
-  const sx = ev.clientX, sy = ev.clientY;
-  const tx = state.transform.x, ty = state.transform.y;
-  const move = (e) => {
-    state.transform.x = tx + (e.clientX - sx);
-    state.transform.y = ty + (e.clientY - sy);
-    applyTransform();
-  };
-  const up = () => {
-    $('game-canvas').classList.remove('panning');
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
-}
-
-function applyTransform() {
-  const t = state.transform;
-  $('game-world').style.transform = `translate(${t.x}px, ${t.y}px) scale(${t.zoom})`;
-  $('game-zoom-label').textContent = `${Math.round(t.zoom * 100)}%`;
-  const canvas = $('game-canvas');
-  canvas.style.backgroundPosition = `${t.x}px ${t.y}px`;
-  canvas.style.backgroundSize = `${24 * t.zoom}px ${24 * t.zoom}px`;
-}
-
-function zoomBy(factor, anchor = null) {
-  const t = state.transform;
-  const rect = $('game-canvas').getBoundingClientRect();
-  const ax = anchor ? anchor.x - rect.left : rect.width / 2;
-  const ay = anchor ? anchor.y - rect.top : rect.height / 2;
-  const before = screenToWorld(rect.left + ax, rect.top + ay);
-  t.zoom = Math.min(2, Math.max(0.25, t.zoom * factor));
-  t.x = ax - before.x * t.zoom;
-  t.y = ay - before.y * t.zoom;
-  applyTransform();
-}
-
-function fitToContent(animate) {
-  if (!state.graph?.nodes.length) {
-    applyTransform();
-    return;
-  }
-  const pad = 60;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const n of state.graph.nodes) {
-    minX = Math.min(minX, n.at[0]);
-    minY = Math.min(minY, n.at[1]);
-    maxX = Math.max(maxX, n.at[0] + NODE_WIDTH);
-    maxY = Math.max(maxY, n.at[1] + nodeHeight(n));
-  }
-  const rect = $('game-canvas').getBoundingClientRect();
-  const w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
-  const zoom = Math.min(2, Math.max(0.25, Math.min(rect.width / w, rect.height / h)));
-  state.transform = {
-    zoom,
-    x: (rect.width - w * zoom) / 2 - minX * zoom + pad * zoom,
-    y: (rect.height - h * zoom) / 2 - minY * zoom + pad * zoom,
-  };
-  applyTransform();
-}
-
-// ── variables registry editor ───────────────────────────────────────────────
+// ── variables registry ─────────────────────────────────────────────────────
 
 let registryLoaded = false;
 
@@ -632,9 +606,8 @@ async function loadVariablesEditor() {
   try {
     const text = await fetch(`/api/projects/${state.project.slug}/worldfile/variables.json`).then((r) => (r.ok ? r.text() : '{"variables": []}'));
     const raw = JSON.parse(text);
-    const entries = raw.variables ?? [];
     $('game-vars-tbody').innerHTML = '';
-    for (const entry of entries) addVariableRow(entry);
+    for (const entry of raw.variables ?? []) addVariableRow(entry);
   } catch (e) {
     console.warn('variables.json not readable', e);
   }
@@ -680,4 +653,16 @@ export async function saveVariablesRegistry() {
     body: JSON.stringify({ content: payload }),
   });
   return res.ok;
+}
+
+function parsePrimitive(raw) {
+  const t = String(raw).trim();
+  if (t === 'true') return true;
+  if (t === 'false') return false;
+  if (t !== '' && !Number.isNaN(Number(t))) return Number(t);
+  return t;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 }

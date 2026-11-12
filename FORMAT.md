@@ -227,3 +227,17 @@ Each `.story` file holds an array of the same action objects, but **without
 `id`**. The compiler concatenates the files (the one containing `startLabel`
 first), assigns sequential ids, and validates that every `label` reference
 resolves.
+
+## Game-cartridge extensions (hikarin-studio games)
+
+These actions are not Minecraft/TLM vocabulary. Engines that do not recognise
+them skip them, same as any unknown action type.
+
+| type | fields | effect |
+|---|---|---|
+| `map` | `map` (id), `x` (int), `y` (int), optional `facing` = `up\|down\|left\|right` | engine swaps the current map to `map`; player spawns at cell `(x,y)`; `facing` defaults to `down` |
+
+Hikarin-studio writes `mapSwitch` blocks (`flow` group) as this action. It is
+a flat action like any other: sequential ids, resolved references, hikarin
+verbatim. The world document itself (`game.json`) is never executed by the
+story runner — it is engine boot data.

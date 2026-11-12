@@ -323,15 +323,15 @@ DEFAULT_GAME: dict[str, Any] = {
     "packName": "My Game",
     "description": "Made with Hikarin Studio",
     "version": 1,
-    "start": "start",
+    "startMap": "home",
 }
 
 
 def create_game_project(slug: str, meta: dict[str, Any] | None = None) -> dict[str, Any]:
     """Scaffold a game project: nested event slot, world folder, one main flow.
 
-    The generated ``world/map.orch`` is a ready-to-run skeleton (meta -> label
-    -> ending) so a game is openable and buildable on creation day.
+    The generated ``world/maps.json`` is a ready-to-boot skeleton: one map,
+    one grass tile, one spawn cell. The author paints from there.
     """
     path = project_dir(slug)
     if path.exists() and any(path.iterdir()):
@@ -351,20 +351,23 @@ def create_game_project(slug: str, meta: dict[str, Any] | None = None) -> dict[s
         json.dumps({"variables": []}, indent=2) + "\n", encoding="utf-8"
     )
 
-    skeleton = {
-        "kind": "orch-graph",
-        "start": "n_meta",
-        "nodes": [
-            {"id": "n_meta", "verb": "meta", "fields": {"action": "start"}, "at": [0, 0]},
-            {"id": "n_label", "verb": "label", "fields": {"label": "start"}, "at": [0, 120]},
-            {"id": "n_end", "verb": "ending", "fields": {}, "at": [0, 240]},
-        ],
-        "wires": [
-            {"from": ["n_meta", "out"], "to": ["n_label", "in"]},
-            {"from": ["n_label", "out"], "to": ["n_end", "in"]},
-        ],
+    grass = ["grass"] * (16 * 16)
+    maps = {
+        "startMap": "home",
+        "maps": {
+            "home": {
+                "cols": 16,
+                "rows": 16,
+                "tiles": grass,
+                "palette": {
+                    "grass": {"image": "asset/grass.png", "traversable": True},
+                },
+                "entities": [],
+                "spawn": {"col": 8, "row": 8, "facing": "down"},
+            },
+        },
     }
-    (world / "map.orch").write_text(json.dumps(skeleton, indent=2) + "\n", encoding="utf-8")
+    (world / "maps.json").write_text(json.dumps(maps, indent=2) + "\n", encoding="utf-8")
 
     merged = dict(DEFAULT_GAME)
     if meta:

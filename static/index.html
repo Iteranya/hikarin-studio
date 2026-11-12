@@ -175,7 +175,7 @@
 <div class="game-shell" id="game-shell" hidden>
   <header class="game-tabs">
     <div class="game-tabset" role="tablist">
-      <button class="game-tab active" data-tab="flow" role="tab">Flow</button>
+      <button class="game-tab active" data-tab="map" role="tab">Map</button>
       <button class="game-tab" data-tab="vars" role="tab">Variables</button>
     </div>
     <input class="game-file-pick" id="game-orch-pick" title="World graph file" readonly>
@@ -187,32 +187,70 @@
   </header>
 
   <div class="game-body">
-    <!-- FLOW CANVAS -->
-    <div class="game-flow" id="game-flow-pane">
-      <div class="game-canvas-toolbar">
-        <select id="game-add-node" class="select tiny">
-          <option value="">＋ Add node…</option>
-          <option value="meta">Meta (start)</option>
-          <option value="label">Label</option>
-          <option value="jump">Jump</option>
-          <option value="conditional">Conditional</option>
-          <option value="map">Map load</option>
-          <option value="entity">Entity</option>
-          <option value="run_event">Run event</option>
-          <option value="set_world">Set world var</option>
-          <option value="save">Save</option>
-          <option value="ending">Ending</option>
-        </select>
-        <span class="game-canvas-spacer"></span>
-        <button class="btn tiny ghost" id="game-zoom-out" title="Zoom out">−</button>
-        <span class="game-zoom" id="game-zoom-label">100%</span>
-        <button class="btn tiny ghost" id="game-zoom-in" title="Zoom in">+</button>
-        <button class="btn tiny ghost" id="game-zoom-fit" title="Fit">Fit</button>
-      </div>
-      <div class="game-canvas" id="game-canvas" tabindex="0">
-        <div class="game-world" id="game-world">
-          <svg class="game-wires" id="game-wires"></svg>
-          <div class="game-nodes" id="game-nodes"></div>
+    <!-- MAP EDITOR -->
+    <div class="game-map" id="game-map-pane">
+      <aside class="game-map-sidebar">
+        <div class="game-map-side-head">
+          <span>Maps</span>
+          <button class="btn tiny ghost" id="game-map-add" title="Add a map">＋ Map</button>
+        </div>
+        <div class="game-map-list" id="game-map-list"></div>
+        <div class="game-map-tabs">
+          <button class="game-map-tab active" data-tool="tiles">Tiles</button>
+          <button class="game-map-tab" data-tool="entities">Entities</button>
+          <button class="game-map-tab" data-tool="spawn">Spawn</button>
+        </div>
+        <div class="game-map-tool" id="game-tool-tiles">
+          <div class="game-map-tool-head">
+            <span>Tile painter</span>
+            <button class="btn tiny ghost" id="game-tile-add" title="Add a tile type">＋ Tile</button>
+          </div>
+          <div class="game-tile-tray" id="game-tile-tray"></div>
+          <div class="game-map-tool-head" style="margin-top:10px">Tile editor</div>
+          <div class="game-tile-editor" id="game-tile-editor">
+            <input id="game-tile-id" placeholder="tile id (e.g. grass)">
+            <input id="game-tile-image" placeholder="asset/file.png">
+            <label class="game-tile-trav"><input type="checkbox" id="game-tile-trav"> traversable</label>
+          </div>
+        </div>
+        <div class="game-map-tool" id="game-tool-entities" hidden>
+          <div class="game-map-tool-head">
+            <span>Entities</span>
+            <button class="btn tiny ghost" id="game-entity-add" title="Place a new entity on the grid">＋ Place</button>
+          </div>
+          <div class="game-entity-tray" id="game-entity-tray"></div>
+          <div class="game-map-tool-head" style="margin-top:10px">Selected entity</div>
+          <div class="game-entity-editor" id="game-entity-editor">
+            <select id="game-entity-kind"><option value="static">static — part of this map</option><option value="non-static">non-static — engine binds it (maid, quest…)</option></select>
+            <input id="game-entity-id" placeholder="entity id (lowercase, slug)">
+            <select id="game-entity-event"></select>
+            <input id="game-entity-col" type="number" min="0" placeholder="col">
+            <input id="game-entity-row" type="number" min="0" placeholder="row">
+            <input id="game-entity-vis" placeholder="visible_if (optional)">
+            <input id="game-entity-interact" placeholder="interact_if (optional)">
+            <input id="game-entity-attach" placeholder="attach (non-static only)">
+            <button class="btn tiny danger" id="game-entity-delete">Delete entity</button>
+          </div>
+        </div>
+        <div class="game-map-tool" id="game-tool-spawn" hidden>
+          <p class="game-map-hint">Click a cell on the grid to set the player spawn. Arrow keys adjust facing.</p>
+          <button class="btn tiny" id="game-spawn-up">Facing: up</button>
+          <button class="btn tiny" id="game-spawn-down">Facing: down</button>
+          <button class="btn tiny" id="game-spawn-left">Facing: left</button>
+          <button class="btn tiny" id="game-spawn-right">Facing: right</button>
+        </div>
+      </aside>
+      <div class="game-map-canvas-wrap">
+        <div class="game-map-canvas-toolbar">
+          <span class="game-map-name" id="game-map-name">—</span>
+          <span class="game-map-dims" id="game-map-dims">—</span>
+          <span class="game-canvas-spacer"></span>
+          <button class="btn tiny ghost" id="game-map-zoom-out">−</button>
+          <span class="game-zoom" id="game-map-zoom-label">32px</span>
+          <button class="btn tiny ghost" id="game-map-zoom-in">+</button>
+        </div>
+        <div class="game-map-canvas-scroll">
+          <canvas id="game-map-canvas"></canvas>
         </div>
       </div>
     </div>
