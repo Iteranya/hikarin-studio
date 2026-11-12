@@ -120,7 +120,37 @@ def list_projects() -> list[dict[str, Any]]:
     return found
 
 
+def _nested_dir(slug: str):
+    """Split a nested slug 'game::event' into (game_dir, event_dir). Returns None otherwise."""
+    parts = slug.split("::")
+    if len(parts) != 2:
+        return None
+    game, event = parts
+    if not SLUG_RE.match(game) or not SLUG_RE.match(event):
+        raise ProjectError(f"Invalid nested project name: {slug!r}")
+    game_dir = PROJECTS_ROOT / game
+    meta_file = game_dir / "project.json"
+    if not meta_file.is_file():
+        raise ProjectError(f"Game '{game}' does not exist")
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ProjectError(f"project.json is not valid JSON: {e}") from e
+    if meta.get("kind") != "game":
+        raise ProjectError(f"Project '{game}' is not a game project")
+    event_dir = (game_dir / EVENTS_DIRNAME / event).resolve()
+    if game_dir.resolve() not in event_dir.parents:
+        raise ProjectError("Invalid event path")
+    return game_dir, event_dir, game, event
+
+
 def project_dir(slug: str) -> Path:
+    nested = _nested_dir(slug)
+    if nested:
+        _game_dir, event_dir, _game, _event = nested
+        if not event_dir.is_dir():
+            raise ProjectError(f"Event '{_event}' does not exist under events/")
+        return event_dir
     if not SLUG_RE.match(slug or ""):
         raise ProjectError(f"Invalid project name: {slug!r}")
     path = PROJECTS_ROOT / slug
@@ -128,6 +158,17 @@ def project_dir(slug: str) -> Path:
     if PROJECTS_ROOT.resolve() not in path.resolve().parents and path.resolve() != PROJECTS_ROOT.resolve():
         raise ProjectError("Invalid project path")
     return path
+
+
+def asset_root(slug: str) -> Path:
+    """Root that holds a project's assets.
+
+    Flat projects: themselves. Nested events: the outer game root — assets are
+    shared by the whole game, so a nested story sees the same sprites and
+    audio as its parent project.
+    """
+    nested = _nested_dir(slug)
+    return nested[0] if nested else project_dir(slug)
 
 
 # ── load / save ─────────────────────────────────────────────────────────────
@@ -169,11 +210,17 @@ def load_project(slug: str) -> dict[str, Any]:
         files[name] = data
 
     meta["files"] = names
+    # Nested story: assets live on the outer game root (shared pool), not the
+    # event folder. The editor should see the same character/sprite lists it
+    # would for any story opened from the outer game.
+    nested = _nested_dir(slug)
+    asset_root = nested[0] if nested else path
     return {
         "slug": slug,
+        "nested": nested is not None,
         "meta": meta,
         "files": files,
-        "assets": list_assets(path),
+        "assets": list_assets(asset_root),
     }
 
 
@@ -405,6 +452,8 @@ def load_game_meta(path: Path) -> dict[str, Any]:
 VARIABLES_FILE_NAME = "variables.json"
 EVENTS_DIRNAME = "events"
 WORLD_DIRNAME = "world"
+
+EVENTS_DIRNAME = "events"
 
 
 def _world_containment(slug: str, rel: str) -> Path:

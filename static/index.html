@@ -33,6 +33,7 @@
     <button class="btn" id="btn-import" title="Import a .hikarin.zip project bundle">Import</button>
     <input type="file" id="file-import" accept=".zip" hidden>
     <button class="btn" id="btn-launcher" title="Project manager">🗂️ Projects</button>
+    <button class="btn" id="btn-back-game" hidden title="Return to the game editor">← Game</button>
     <button class="btn" id="btn-assets" disabled title="Add images, characters and sounds">🎨 Assets</button>
     <button class="btn" id="btn-save" title="Save (Ctrl+S)">💾 Save</button>
     <button class="btn primary" id="btn-play" disabled title="Test this scene">▶ Play</button>
@@ -177,8 +178,9 @@
     <div class="game-tabset" role="tablist">
       <button class="game-tab active" data-tab="map" role="tab">Map</button>
       <button class="game-tab" data-tab="vars" role="tab">Variables</button>
+      <button class="game-tab" data-tab="events" role="tab">Events</button>
     </div>
-    <input class="game-file-pick" id="game-orch-pick" title="World graph file" readonly>
+    <span class="chip subtle" id="game-orch-pick" title="Events live in events/&lt;name&gt;/. Open a story to edit it.">—</span>
     <span class="game-spacer"></span>
     <span class="chip subtle" id="game-build-status">not built</span>
     <button class="btn tiny" id="game-save" title="Save (Ctrl+S)">💾 Save</button>
@@ -270,6 +272,18 @@
         </table>
       </div>
       <p class="game-vars-hint">World registry — every <code>@world.*</code> flag in this game is listed here. Unused entries warn at export; references absent from the registry still compile.</p>
+    </div>
+
+    <!-- EVENTS ROSTER -->
+    <div class="game-events" id="game-events-pane" hidden>
+      <div class="game-events-head">
+        <span class="game-events-title">Stories in this game</span>
+        <span class="chip subtle" id="game-events-count">0 events</span>
+        <span class="game-vars-spacer"></span>
+        <button class="btn tiny" id="game-event-new" title="Create a story event">＋ New story</button>
+      </div>
+      <div class="game-events-grid" id="game-events-grid"></div>
+      <p class="game-vars-hint">Each story lives in <code>events/&lt;name&gt;/</code> as a normal hikarin story project. Click one to open it in the story editor — <b>Back to game</b> brings you home.</p>
     </div>
 
     <!-- INSPECTOR -->

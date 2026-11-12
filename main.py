@@ -11,6 +11,7 @@ A small FastAPI app. No database, no accounts: a project is a folder under
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -322,6 +323,101 @@ def write_world_file(slug: str, path: str, req: RawSaveRequest):
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+# ── game: nested story events (roster) ──────────────────────────
+# ── game: nested story events (roster) ─────────────────────────────
+
+@app.get("/api/projects/{slug}/events")
+def list_story_events(slug: str):
+    """Every story living under events/ of a game project (cards for the roster)."""
+    try:
+        path = project_store.project_dir(slug)
+        meta_file = path / "project.json"
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    except project_store.ProjectError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    if meta.get("kind") != "game":
+        raise HTTPException(status_code=400, detail="not a game project")
+    events_dir = path / "events"
+    cards = []
+    if events_dir.is_dir():
+        for child in sorted(events_dir.iterdir()):
+            meta_f = child / "project.json"
+            if not child.is_dir() or not meta_f.is_file():
+                continue
+            try:
+                data = json.loads(meta_f.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            if data.get("kind") == "game":
+                continue
+            cards.append(
+                {
+                    "slug": child.name,
+                    "character": data.get("character", child.name),
+                    "packName": data.get("packName", child.name),
+                    "description": data.get("description", ""),
+                    "files": data.get("files", []),
+                    "storyFiles": len(list(child.rglob("*.story"))),
+                }
+            )
+    return {"slug": slug, "events": cards}
+
+
+class EventCreateRequest(BaseModel):
+    event: str
+    packName: str | None = None
+
+
+@app.post("/api/projects/{slug}/events")
+def create_story_event(slug: str, req: EventCreateRequest):
+    """Create a fresh nested story event under events/<name>/."""
+    try:
+        game_dir = project_store.project_dir(slug)
+        game_meta_file = game_dir / "project.json"
+        game_meta = json.loads(game_meta_file.read_text(encoding="utf-8"))
+        if game_meta.get("kind") != "game":
+            raise HTTPException(status_code=400, detail=f"Project '{slug}' is not a game project")
+        base = (game_dir / "events" / req.event).resolve()
+        if game_dir.resolve() not in base.parents:
+            raise HTTPException(status_code=400, detail="Invalid event path")
+        if base.exists():
+            raise HTTPException(status_code=400, detail=f"Event '{req.event}' already exists")
+        base.mkdir(parents=True)
+        (base / "project.json").write_text(
+            json.dumps(
+                {
+                    "kind": "story",
+                    "character": req.event,
+                    "packName": req.packName or req.event.title(),
+                    "packFormat": 15,
+                    "description": "Made with Hikarin Studio",
+                    "files": ["main.story"],
+                    "startLabel": "start",
+                },
+                indent=2,
+            )
+            + chr(10),
+            encoding="utf-8",
+        )
+        (base / "main.story").write_text(
+            json.dumps(
+                [
+                    {"kind": "label", "data": {"name": "start"}},
+                    {"kind": "say", "data": {"label": "", "content": "Hello."}},
+                    {"kind": "end", "data": {}},
+                ],
+                indent=2,
+            )
+            + chr(10),
+            encoding="utf-8",
+        )
+        return {"ok": True, "event": req.event}
+    except project_store.ProjectError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
 # ── assets ──────────────────────────────────────────────────────────────────
 #
 # The asset manager window's half of the story: read the inventory, add a
@@ -337,14 +433,14 @@ def _assets_or_400(fn, *args):
 
 
 def _inventory(slug: str) -> dict:
-    return asset_store.inventory(project_store.project_dir(slug))
+    return asset_store.inventory(project_store.asset_root(slug))
 
 
 @app.get("/api/projects/{slug}/asset-list")
 def list_project_assets(slug: str):
     """The full asset tree, without reloading the story files."""
     try:
-        project_store.project_dir(slug)
+        project_store.asset_root(slug)
     except project_store.ProjectError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     return _assets_or_400(_inventory, slug)
@@ -352,21 +448,21 @@ def list_project_assets(slug: str):
 
 @app.post("/api/projects/{slug}/assets/character")
 def create_character_asset(slug: str, req: NewCharacterRequest):
-    base = project_store.project_dir(slug)
+    base = project_store.asset_root(slug)
     created = _assets_or_400(asset_store.create_character, base, req.character, req.outfit)
     return {"created": created, "assets": _assets_or_400(_inventory, slug)}
 
 
 @app.post("/api/projects/{slug}/assets/outfit")
 def create_outfit_asset(slug: str, req: NewOutfitRequest):
-    base = project_store.project_dir(slug)
+    base = project_store.asset_root(slug)
     created = _assets_or_400(asset_store.create_outfit, base, req.character, req.outfit)
     return {"created": created, "assets": _assets_or_400(_inventory, slug)}
 
 
 @app.post("/api/projects/{slug}/assets/folder")
 def create_asset_folder(slug: str, req: NewFolderRequest):
-    base = project_store.project_dir(slug)
+    base = project_store.asset_root(slug)
     created = _assets_or_400(asset_store.create_folder, base, req.path)
     return {"created": created, "assets": _assets_or_400(_inventory, slug)}
 
@@ -379,7 +475,7 @@ def upload_assets(slug: str, req: UploadRequest):
     no extra install to break, and an image is not big enough for the encoding
     overhead to matter. The 24 MB per-file ceiling is in ``hikarin.assets``.
     """
-    base = project_store.project_dir(slug)
+    base = project_store.asset_root(slug)
     if not req.files:
         raise HTTPException(status_code=400, detail="No files given")
 
@@ -393,7 +489,7 @@ def upload_assets(slug: str, req: UploadRequest):
 
 @app.delete("/api/projects/{slug}/assets")
 def delete_asset(slug: str, path: str):
-    base = project_store.project_dir(slug)
+    base = project_store.asset_root(slug)
     deleted = _assets_or_400(asset_store.delete_path, base, path)
     return {"deleted": deleted, "assets": _assets_or_400(_inventory, slug)}
 
@@ -407,7 +503,7 @@ def serve_asset(slug: str, path: str):
     ``textures/<...>`` because that is what the engine's location strings say,
     so the two get mapped here: ``textures/x`` -> ``images/x``.
     """
-    base = project_store.project_dir(slug).resolve()
+    base = project_store.asset_root(slug).resolve()
 
     if path.startswith("textures/"):
         target = (base / "images" / path[len("textures/"):]).resolve()
@@ -467,7 +563,7 @@ def export_project(slug: str, format: str = "pack"):
     import json as _json
     try:
         if fmt == "pack":
-            payload = build_pack(loaded["meta"], result, project_store.project_dir(slug))
+            payload = build_pack(loaded["meta"], result, project_store.asset_root(slug))
             media = "application/zip"
         elif fmt == "json":
             payload = build_json(loaded["meta"], result)
@@ -479,7 +575,7 @@ def export_project(slug: str, format: str = "pack"):
             payload = build_markdown(loaded["meta"], result)
             media = "text/markdown"
         elif fmt == "bundle":
-            payload = build_project_bundle(loaded["meta"], loaded["files"], project_store.project_dir(slug))
+            payload = build_project_bundle(loaded["meta"], loaded["files"], project_store.asset_root(slug))
             media = "application/zip"
         else:
             raise HTTPException(status_code=400, detail=f"Unknown export format: {format!r} (pack|json|txt|md|bundle|game)")

@@ -1,3 +1,4 @@
+import { uiAlert, uiConfirm, uiPrompt } from './dialog.js';
 /* Hikarin Studio — the asset manager window.
  *
  * One modal, three tabs, and the same two trees the engine reads:
@@ -87,7 +88,7 @@ export function initAssets(context) {
 
 export function openAssets(tab) {
   if (!ctx?.state.project) {
-    alert('Open a project first.');
+    uiAlert('Open a project first.');
     return;
   }
   if (tab) activeTab = tab;
@@ -531,9 +532,9 @@ async function pickFiles(dir) {
 }
 
 async function newCharacter() {
-  const name = prompt('Character name (lowercase, e.g. cupa)');
+  const name = await uiPrompt('Character name (lowercase, e.g. cupa)');
   if (!name) return;
-  const outfit = prompt('First outfit folder', 'default') ?? 'default';
+  const outfit = await uiPrompt('First outfit folder', 'default') ?? 'default';
 
   setStatus('creating…');
   const data = await api('POST', '/assets/character', { character: name, outfit });
@@ -551,7 +552,7 @@ async function newCharacter() {
 }
 
 async function newOutfit(character) {
-  const outfit = prompt(`New outfit for ${character}`, 'summer');
+  const outfit = await uiPrompt(`New outfit for ${character}`, 'summer');
   if (!outfit) return;
 
   setStatus('creating…');
@@ -561,7 +562,7 @@ async function newOutfit(character) {
 }
 
 async function newFolder() {
-  const name = prompt('New image folder (e.g. ui)', 'ui');
+  const name = await uiPrompt('New image folder (e.g. ui)', 'ui');
   if (!name) return;
 
   setStatus('creating…');
@@ -573,7 +574,7 @@ async function newFolder() {
 async function removePath(path, label) {
   if (!path) return;
   const readable = label || path;
-  if (!confirm(`Delete ${readable}?\n\n${path}\n\nThis removes it from disk and cannot be undone.`)) return;
+  if (!await uiConfirm(`Delete ${readable}?\n\n${path}\n\nThis removes it from disk and cannot be undone.`)) return;
 
   setStatus('deleting…');
   const data = await api('DELETE', `/assets?path=${encodeURIComponent(path)}`);

@@ -1,3 +1,4 @@
+import { uiAlert, uiConfirm, uiPrompt } from './dialog.js';
 /* Preview harness for a Hikarin story.
  *
  * Loads the compiled actions from /api/projects/{slug}/play — the same
@@ -183,8 +184,8 @@ function applyEnvironment() {
 
 function wireControls() {
   $('btn-play').onclick = play;
-  $('btn-reset').onclick = () => {
-    if (confirm('Reset clears every variable and starts over. Continue?')) reset();
+  $('btn-reset').onclick = async () => {
+    if (await uiConfirm('Reset clears every variable and starts over. Continue?')) reset();
   };
   $('btn-stop').onclick = stop;
 

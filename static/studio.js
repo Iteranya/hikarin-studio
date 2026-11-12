@@ -1,3 +1,4 @@
+import { uiAlert, uiConfirm, uiPrompt } from './dialog.js';
 /* Hikarin Studio — editor logic.
  *
  * State lives in `state.projects[slug]`. The server owns the files; this module
@@ -194,38 +195,43 @@ function relTime(ms) {
 }
 
 async function launcherDuplicate(slug) {
-  const new_slug = prompt('New project name (lowercase, no spaces)', slug + '-copy');
+  const new_slug = await uiPrompt('New project name (lowercase, no spaces)', slug + '-copy');
   if (!new_slug) return;
   const res = await fetch(`/api/projects/${slug}/duplicate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ new_slug }),
   });
-  if (!res.ok) { alert((await res.json()).detail || 'Duplicate failed'); return; }
+  if (!res.ok) { uiAlert((await res.json()).detail || 'Duplicate failed'); return; }
   await showLauncher();
 }
 
 async function launcherDelete(slug) {
-  if (!confirm(`Delete project "${slug}"? This removes its folder and all files inside it.`)) return;
+  if (!await uiConfirm(`Delete project "${slug}"? This removes its folder and all files inside it.`)) return;
   const res = await fetch(`/api/projects/${slug}`, { method: 'DELETE' });
-  if (!res.ok) { alert((await res.json()).detail || 'Delete failed'); return; }
+  if (!res.ok) { uiAlert((await res.json()).detail || 'Delete failed'); return; }
   if (state.project?.slug === slug) state.project = null;
   await showLauncher();
 }
 
 async function launcherNew(kind) {
-  const slug = prompt(kind === 'game' ? 'Game name (lowercase, no spaces)' : 'Project name (lowercase, no spaces)');
+  const slug = await uiPrompt(kind === 'game' ? 'Game name (lowercase, no spaces)' : 'Project name (lowercase, no spaces)');
   if (!slug) return;
-  const packName = prompt(kind === 'game' ? 'Game title' : 'Story title', slug) || slug;
+  const packName = await uiPrompt(kind === 'game' ? 'Game title' : 'Story title', slug) || slug;
   const res = await fetch('/api/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ slug, meta: { kind, packName, character: slug } }),
   });
-  if (!res.ok) { alert((await res.json()).detail || 'Could not create the project.'); return; }
+  if (!res.ok) { uiAlert((await res.json()).detail || 'Could not create the project.'); return; }
   hideLauncher();
   await openProject(slug);
 }
+
+window.addEventListener('hikarin:open-story', (ev) => {
+  const { game, event } = ev.detail ?? {};
+  if (game && event) openNestedStory(game, event);
+});
 
 function wireLauncher() {
   document.getElementById('btn-launcher')?.addEventListener('click', () => {
@@ -266,6 +272,7 @@ async function refreshProjectList() {
 
 async function openProject(slug) {
   hideLauncher();
+  $('btn-back-game').hidden = true;
   // Whatever is on screen has to be on disk before the next project's files are
   // read, or an autosave can land on the project you just left.
   if (state.project) await flushAutosave();
@@ -311,6 +318,47 @@ async function openProject(slug) {
   const emptyState = $('empty-state');
   if (emptyState) emptyState.hidden = true;
 
+
+  renderTabs();
+  renderBlocks();
+  renderOutline();
+  renderInspector();
+  updateCounts();
+}
+
+/** Mount a nested story (an event inside a game) exactly like a flat story.
+ * The game shell is hidden; the story surface shows in its place; the topbar
+ * grows a "← Game" button that drops you back into the game editor.
+ */
+export async function openNestedStory(gameSlug, eventSlug) {
+  hideLauncher();
+  // Flat virtual slug — _nested_dir() routes it to events/<event> everywhere.
+  const slug = `${gameSlug}::${eventSlug}`;
+  const data = await fetch(`/api/projects/${slug}`).then((r) => r.json());
+  if (!data || data.detail) { uiAlert(data?.detail ?? 'Could not open the event.'); return; }
+
+  // The server compiles the story under a nested virtual slug. Mirror it.
+  state.project = { ...data, slug, nested: { game: gameSlug, event: eventSlug } };
+  const sel = document.getElementById('project-select'); if (sel) sel.value = data.meta.files?.[0] ?? gameSlug;
+  closeGameEditor();
+  $('game-shell').hidden = true;
+  $('mobile-nav')?.removeAttribute('hidden');
+  document.querySelector('.workspace').style.visibility = 'visible';
+  state.project.meta.files = data.meta.files ?? [];
+  state.activeFile = state.project.meta.files[0] ?? null;
+  state.selected = null;
+  state.dirty = false;
+
+  $('project-name').textContent = `${data.meta.packName || eventSlug} · ${gameSlug}`;
+  $('project-character').textContent = `events/${eventSlug}`;
+  $('btn-play').disabled = false;
+  $('btn-export').disabled = false;
+  $('btn-compile').disabled = false;
+  $('btn-assets').disabled = false;
+  $('btn-back-game').hidden = false;
+
+  const emptyState = $('empty-state');
+  if (emptyState) emptyState.hidden = true;
 
   renderTabs();
   renderBlocks();
@@ -434,12 +482,12 @@ function renderTabs() {
   tabs.appendChild(add);
 }
 
-function newFile() {
-  const name = prompt('File name (e.g. night.story or items/endrod.story)');
+async function newFile() {
+  const name = await uiPrompt('File name (e.g. night.story or items/endrod.story)');
   if (!name) return;
   const clean = name.endsWith('.story') ? name : `${name}.story`;
   if (state.project.files[clean]) {
-    alert('That file already exists.');
+    uiAlert('That file already exists.');
     return;
   }
   state.project.files[clean] = [];
@@ -1584,11 +1632,11 @@ function spritePicker(data) {
     const character = data.sprite || select.value;
     if (!character) return;
     const path = `images/characters/${character}`;
-    if (!confirm(`Delete every sprite for "${character}"?\n\n${path}\n\nThis removes the folder from disk and cannot be undone.`)) return;
+    if (!await uiConfirm(`Delete every sprite for "${character}"?\n\n${path}\n\nThis removes the folder from disk and cannot be undone.`)) return;
     try {
       await deleteAssetPath(path);
     } catch (err) {
-      alert(String(err.message ?? err));
+      uiAlert(String(err.message ?? err));
     }
   };
 
@@ -1873,6 +1921,13 @@ function wireChrome() {
   $('btn-rename').onclick = renameProject;
   $('btn-delete').onclick = deleteProject;
   $('btn-import').onclick = () => $('file-import').click();
+  $('btn-back-game').onclick = () => {
+    const nested = state.project?.nested;
+    state.project = null;
+    $('btn-back-game').hidden = true;
+    document.querySelector('.workspace').style.visibility = 'hidden';
+    if (nested) openProject(nested.game);
+  };
   $('btn-add-say').onclick = addSayBlock;
   document.getElementById('project-select').onchange = (e) => { if (e.target.value) openProject(e.target.value); };
   document.getElementById('file-import').onchange = importProjectFile;
@@ -1910,9 +1965,9 @@ function wireChrome() {
 }
 
 async function newProject() {
-  const slug = prompt('Project name (lowercase, no spaces)');
+  const slug = await uiPrompt('Project name (lowercase, no spaces)');
   if (!slug) return;
-  const packName = prompt('Story title', slug) || slug;
+  const packName = await uiPrompt('Story title', slug) || slug;
 
   const res = await fetch('/api/projects', {
     method: 'POST',
@@ -1922,7 +1977,7 @@ async function newProject() {
 
   if (!res.ok) {
     const err = await res.json();
-    alert(err.detail || 'Could not create the project.');
+    uiAlert(err.detail || 'Could not create the project.');
     return;
   }
   await openProject(slug);
@@ -1997,7 +2052,7 @@ async function save({ silent = false } = {}) {
           clearTimeout(autosave.retry);
           autosave.retry = setTimeout(() => scheduleAutosave(0), 4000);
         } else {
-          alert(message);
+          uiAlert(message);
         }
       }
       return false;
@@ -2039,7 +2094,7 @@ async function validate() {
       ...result.warnings.map((w) => `warn:  ${w}`),
     ];
     console.log(lines.join('\n'));
-    alert(lines.join('\n'));
+    uiAlert(lines.join('\n'));
   }
 }
 
@@ -2052,36 +2107,36 @@ async function exportPack() {
 
 async function duplicateProject() {
   if (!state.project) return;
-  const new_slug = prompt('New project name (lowercase, no spaces)', state.project.slug + '-copy');
+  const new_slug = await uiPrompt('New project name (lowercase, no spaces)', state.project.slug + '-copy');
   if (!new_slug) return;
   const res = await fetch(`/api/projects/${state.project.slug}/duplicate`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ new_slug }),
   });
-  if (!res.ok) { alert((await res.json()).detail || 'Duplicate failed'); return; }
+  if (!res.ok) { uiAlert((await res.json()).detail || 'Duplicate failed'); return; }
   await refreshProjectList();
   await openProject(new_slug);
 }
 
 async function renameProject() {
   if (!state.project) return;
-  const new_slug = prompt('New project name (lowercase, no spaces)', state.project.slug);
+  const new_slug = await uiPrompt('New project name (lowercase, no spaces)', state.project.slug);
   if (!new_slug || new_slug === state.project.slug) return;
   const res = await fetch(`/api/projects/${state.project.slug}/rename`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ new_slug }),
   });
-  if (!res.ok) { alert((await res.json()).detail || 'Rename failed'); return; }
+  if (!res.ok) { uiAlert((await res.json()).detail || 'Rename failed'); return; }
   await refreshProjectList();
   await openProject(new_slug);
 }
 
 async function deleteProject() {
   if (!state.project) return;
-  if (!confirm(`Delete project "${state.project.slug}"? This removes its folder and all .story files.`)) return;
+  if (!await uiConfirm(`Delete project "${state.project.slug}"? This removes its folder and all .story files.`)) return;
   const slug = state.project.slug;
   const res = await fetch(`/api/projects/${slug}`, { method: 'DELETE' });
-  if (!res.ok) { alert((await res.json()).detail || 'Delete failed'); return; }
+  if (!res.ok) { uiAlert((await res.json()).detail || 'Delete failed'); return; }
   state.project = null;
   await refreshProjectList();
 }
@@ -2089,13 +2144,13 @@ async function deleteProject() {
 async function importProjectFile(e) {
   const file = e.target.files?.[0];
   if (!file) return;
-  const slug = prompt('Project name to import as (lowercase, no spaces)', file.name.replace(/\.hikarin?\.zip$/i, '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase()) || 'imported';
+  const slug = await uiPrompt('Project name to import as (lowercase, no spaces)', file.name.replace(/\.hikarin?\.zip$/i, '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase()) || 'imported';
   const buf = await file.arrayBuffer();
   const res = await fetch(`/api/projects/import-zip?slug=${encodeURIComponent(slug)}`, {
     method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: buf,
   });
   e.target.value = '';
-  if (!res.ok) { alert((await res.json()).detail || 'Import failed'); return; }
+  if (!res.ok) { uiAlert((await res.json()).detail || 'Import failed'); return; }
   await refreshProjectList();
   await openProject(slug);
 }

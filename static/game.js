@@ -1,3 +1,4 @@
+import { uiAlert, uiConfirm, uiPrompt } from './dialog.js';
 /* Hikarin Studio — Game editor.
  *
  * Visual surface for kind === "game" projects. The world IS hikarin: flags
@@ -59,6 +60,7 @@ export async function openGameEditor(project) {
 
   await loadMapsFile();
   await loadVariablesEditor();
+  await loadEventsEditor();
   renderAll();
   wireGameChrome();
 }
@@ -145,6 +147,7 @@ function renderAll() {
   renderEntityTray();
   renderEntityEditor();
   renderCanvas();
+  renderEventsEditor();
   $('game-vars-count').textContent = `${$('game-vars-tbody').children.length} declared`;
   $('game-map-name').textContent = `${state.activeMapId}${state.data.startMap === state.activeMapId ? ' ⬢ start' : ''}`;
   const m = activeMap();
@@ -538,10 +541,10 @@ function wireGameChrome() {
   $('game-map-zoom-in').onclick = () => { state.cellSize = Math.min(64, state.cellSize + 8); renderAll(); };
   $('game-map-zoom-out').onclick = () => { state.cellSize = Math.max(16, state.cellSize - 8); renderAll(); };
 
-  $('game-map-add').onclick = () => {
-    const id = prompt('Map id (lowercase, no spaces)', 'wastes');
+  $('game-map-add').onclick = async () => {
+    const id = await uiPrompt('Map id (lowercase, no spaces)', 'wastes');
     if (!id) return;
-    if (state.data.maps[id]) { alert('That map id already exists.'); return; }
+    if (state.data.maps[id]) { uiAlert('That map id already exists.'); return; }
     state.data.maps[id] = defaultMap(id);
     state.activeMapId = id;
     if (!state.data.startMap) state.data.startMap = id;
@@ -549,6 +552,7 @@ function wireGameChrome() {
   };
 
   $('game-entity-add').onclick = () => { state.tool = 'entities'; state.activeEntityIndex = null; renderToolTabs(); };
+  $('game-event-new').onclick = () => createNewEvent();
 
   [['up', 'game-spawn-up'], ['down', 'game-spawn-down'], ['left', 'game-spawn-left'], ['right', 'game-spawn-right']].forEach(([facing, id]) => {
     $(id).onclick = () => { activeMap().spawn.facing = facing; markDirty(); renderAll(); };
@@ -566,12 +570,15 @@ function wireGameChrome() {
     tab.__wired = true;
     tab.addEventListener('click', () => {
       document.querySelectorAll('.game-tab').forEach((t) => t.classList.toggle('active', t === tab));
-      const isMap = tab.dataset.tab === 'map';
-      $('game-map-pane').hidden = !isMap;
-      $('game-vars-pane').hidden = isMap;
-      $('game-inspector-body').innerHTML = isMap
+      const which = tab.dataset.tab;
+      $('game-map-pane').hidden = which !== 'map';
+      $('game-vars-pane').hidden = which !== 'vars';
+      $('game-events-pane').hidden = which !== 'events';
+      $('game-inspector-body').innerHTML = which === 'map'
         ? '<div class="empty-hint">Paint tiles · place entities · set spawn.</div>'
-        : '<div class="empty-hint">Edit the registry rows on the left. Name, type, default, description.</div>';
+        : which === 'vars'
+          ? '<div class="empty-hint">Edit the registry rows on the left. Name, type, default, description.</div>'
+          : '<div class="empty-hint">Click any story to open it in the editor.</div>';
     });
   });
 
@@ -681,4 +688,64 @@ function parsePrimitive(raw) {
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
+
+
+// ── events roster ───────────────────────────────────────────────────────────
+
+async function loadEventsEditor() {
+  try {
+    const data = await fetch(`/api/projects/${state.project.slug}/events`).then((r) => r.json());
+    state.events = (data.events ?? []).map((e) => ({ ...e, card: e.packName ?? e.slug }));
+  } catch (e) {
+    console.warn('events not readable', e);
+    state.events = [];
+  }
+  renderEventsEditor();
+}
+
+function renderEventsEditor() {
+  const grid = $('game-events-grid');
+  if (!grid) return;
+  const events = state.events ?? [];
+  $('game-events-count').textContent = `${events.length} event${events.length === 1 ? '' : 's'}`;
+  if (!events.length) {
+    grid.innerHTML = '<div class="empty-hint">No stories yet — press ＋ New story.</div>';
+    return;
+  }
+  grid.innerHTML = events.map((e) => `
+    <button class="game-event-card" data-event="${escapeHtml(e.slug)}">
+      <div class="game-event-card-name">${escapeHtml(e.card ?? e.packName ?? e.slug)}</div>
+      <div class="game-event-card-slug">events/${escapeHtml(e.slug)}</div>
+      <div class="game-event-card-desc">${escapeHtml(e.description ?? '')}</div>
+      <div class="game-event-card-meta"><span>${(e.files ?? []).length} file${(e.files ?? []).length === 1 ? '' : 's'}</span><span>·</span><span>${e.storyFiles ?? 0} .story</span></div>
+      <div class="game-event-card-actions">
+        <span class="btn tiny primary">Open story</span>
+        <span class="btn tiny danger event-delete" title="Delete this event">Delete</span>
+      </div>
+    </button>`).join('');
+  grid.querySelectorAll('.game-event-card').forEach((card) => {
+    card.addEventListener('click', async (ev) => {
+      if (ev.target.closest('.event-delete')) {
+        const slug = card.dataset.event;
+        if (!await uiConfirm(`Delete event "${slug}"? This removes the folder events/${slug}.`)) return;
+        fetch(`/api/projects/${state.project.slug}::${slug}`, { method: 'DELETE' }).then((r) => r.ok ? loadEventsEditor() : uiAlert('Could not delete the story.'));
+        return;
+      }
+      const slug = card.dataset.event;
+      window.dispatchEvent(new CustomEvent('hikarin:open-story', { detail: { game: state.project.slug, event: slug } }));
+    });
+  });
+}
+
+async function createNewEvent() {
+  const name = await uiPrompt('New story name (lowercase, no spaces)');
+  if (!name) return;
+  const res = await fetch(`/api/projects/${state.project.slug}/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: name, packName: name.title() }),
+  });
+  if (!res.ok) { uiAlert((await res.json()).detail || 'Could not create the story.'); return; }
+  await loadEventsEditor();
 }
