@@ -1314,3 +1314,6 @@ html, body {
 #game-map-canvas { display: block; image-rendering: pixelated; margin: 24px; cursor: crosshair; background: #090b10; }
 
 .game-shell[hidden] { display: none; }
+
+.game-map[hidden], .game-map-sidebar[hidden], .game-map-canvas-wrap[hidden],
+.game-vars[hidden], .game-tool-tiles[hidden], .game-tool-entities[hidden], .game-tool-spawn[hidden] { display: none !important; }
