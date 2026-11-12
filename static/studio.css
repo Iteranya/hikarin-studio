@@ -1317,3 +1317,5 @@ html, body {
 
 .game-map[hidden], .game-map-sidebar[hidden], .game-map-canvas-wrap[hidden],
 .game-vars[hidden], .game-tool-tiles[hidden], .game-tool-entities[hidden], .game-tool-spawn[hidden] { display: none !important; }
+
+.game-tile-chip .tile-emoji { font-size: 18px; line-height: 1; }

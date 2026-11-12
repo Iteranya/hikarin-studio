@@ -190,7 +190,7 @@ function renderTileTray() {
     const url = tileImageUrl(entry.image);
     const active = id === state.activeTileId ? ' active' : '';
     return `<button class="game-tile-chip${active}" data-tile="${escapeHtml(id)}" title="${escapeHtml(entry.image)}">
-      ${url ? `<img src="${url}" alt="">` : '<span>?</span>'}
+      <span class="tile-emoji">${tileEmoji(id)}</span>
       <span>${escapeHtml(id)}</span>
       <span class="tile-trav">${entry.traversable ? '↔' : '■'}</span>
     </button>`;
@@ -309,16 +309,18 @@ function drawTileCell(ctx, tileId, entry, x, y, size) {
     const image = new Image();
     image.src = url;
     image.onload = () => renderCanvas();
-    image.onerror = () => renderCanvas();
+    image.onerror = () => { image._failed = true; renderCanvas(); };
     state.imageCache.set(url, image);
   }
   ctx.fillStyle = hashHue(tileId);
   ctx.fillRect(x, y, size, size);
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.font = `${Math.floor(size / 2)}px monospace`;
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(x + size * 0.2, y + size * 0.1, size * 0.6, size * 0.7);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = `${Math.floor(size * 0.62)}px "Segoe UI Emoji", serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(tileId.slice(0, 1).toUpperCase(), x + size / 2, y + size / 2 + 1);
+  ctx.fillText(tileEmoji(tileId), x + size / 2, y + size / 2 + 1);
 }
 
 function drawMarker(ctx, col, row, size, glyph, color, strong = false) {
@@ -332,6 +334,22 @@ function drawMarker(ctx, col, row, size, glyph, color, strong = false) {
   ctx.textBaseline = 'middle';
   ctx.fillText(glyph, x + size / 2, y + size / 2 + 1);
   ctx.restore();
+}
+
+function tileEmoji(id) {
+  const key = String(id ?? '').toLowerCase();
+  const table = {
+    grass: '🌿', tree: '🌳', wall: '🧱', water: '🌊', stone: '🪨', sand: '🏜️',
+    snow: '❄️', road: '🛣️', chest: '📦', door: '🚪', void: '⬛', light: '💡',
+  };
+  if (table[key]) return table[key];
+  if (key.includes('grass')) return '🌿';
+  if (key.includes('tree')) return '🌳';
+  if (key.includes('water') || key.includes('sea') || key.includes('lake')) return '🌊';
+  if (key.includes('wall') || key.includes('brick')) return '🧱';
+  if (key.includes('stone') || key.includes('rock')) return '🪨';
+  if (key.includes('road') || key.includes('path')) return '🛣️';
+  return '◻️';
 }
 
 function hashHue(key) {
