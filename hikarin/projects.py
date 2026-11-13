@@ -49,6 +49,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import os
 import shutil
 import zipfile
 from pathlib import Path
@@ -160,6 +161,24 @@ def project_dir(slug: str) -> Path:
     return path
 
 
+def dest_dir(slug: str) -> Path:
+    """Destination path for a project (used by duplicate/rename targets).
+
+    Unlike project_dir(), the nested event folder is allowed to be missing —
+    a brand-new event is being created by the operation.
+    """
+    nested = _nested_dir(slug)
+    if nested:
+        _game_dir, event_dir, _game, _event = nested
+        return event_dir
+    if not SLUG_RE.match(slug or ""):
+        raise ProjectError(f"Invalid project name: {slug!r}")
+    path = PROJECTS_ROOT / slug
+    if PROJECTS_ROOT.resolve() not in path.resolve().parents and path.resolve() != PROJECTS_ROOT.resolve():
+        raise ProjectError("Invalid project path")
+    return path
+
+
 def asset_root(slug: str) -> Path:
     """Root that holds a project's assets.
 
@@ -257,23 +276,25 @@ def save_project(slug: str, meta: dict[str, Any], files: dict[str, list[dict]]) 
     )
 
 
-def create_project(slug: str, meta: dict[str, Any] | None = None) -> dict[str, Any]:
-    meta = dict(meta or {})
-    if meta.get("kind") == "game":
-        return create_game_project(slug, meta)
+def _story_scaffold(target: Path, virtual_slug: str, merged: dict[str, Any]) -> dict[str, Any]:
+    """Write the story folder and project.json. Internal use only.
 
-    path = project_dir(slug)
-    if path.exists() and any(path.iterdir()):
-        raise ProjectError(f"Project '{slug}' already exists")
-    path.mkdir(parents=True, exist_ok=True)
+    Hikarin Studio no longer has standalone story top-level projects: a story
+    is a nested project under events/<event>/ of a game project. This helper
+    does the folder scaffolding for such nested stories and is also used by
+    the bundled-story import wrap. The path must have already been validated
+    by the caller; ``virtual_slug`` is the 'game::event' routing slug used by
+    save_project/load_project.
+    """
+    target.mkdir(parents=True, exist_ok=True)
 
     # Scaffold the mediafile layout so the folders are obvious the first time
     # the author opens the project in Explorer.
-    (path / "images" / "characters").mkdir(parents=True, exist_ok=True)
-    (path / "images" / "asset").mkdir(parents=True, exist_ok=True)
-    (path / "sounds" / "music").mkdir(parents=True, exist_ok=True)
-    (path / "sounds" / "sound").mkdir(parents=True, exist_ok=True)
-    (path / "images" / "characters" / "Add Character Sprite Here.txt").write_text(
+    (target / "images" / "characters").mkdir(parents=True, exist_ok=True)
+    (target / "images" / "asset").mkdir(parents=True, exist_ok=True)
+    (target / "sounds" / "music").mkdir(parents=True, exist_ok=True)
+    (target / "sounds" / "sound").mkdir(parents=True, exist_ok=True)
+    (target / "images" / "characters" / "Add Character Sprite Here.txt").write_text(
         "Character sprites go in folders here.\n\n"
         "The format is name/outfit/image.png\n\n"
         "like:\n\n"
@@ -284,7 +305,7 @@ def create_project(slug: str, meta: dict[str, Any] | None = None) -> dict[str, A
         "texture paths.\n",
         encoding="utf-8",
     )
-    (path / "images" / "asset" / "Add Background Here.txt").write_text(
+    (target / "images" / "asset" / "Add Background Here.txt").write_text(
         "Backgrounds go here, flat.\n\n"
         "Like:\n\n"
         "    end.png\n\n"
@@ -292,26 +313,67 @@ def create_project(slug: str, meta: dict[str, Any] | None = None) -> dict[str, A
         "    asset/end.png\n",
         encoding="utf-8",
     )
-    (path / "sounds" / "sound" / "Add Sound Here.txt").write_text(
+    (target / "sounds" / "sound" / "Add Sound Here.txt").write_text(
         "Sound effects go here, as .ogg files.\n\n"
         "In a script, a sound named click.ogg is referenced as:\n\n"
         "    click\n",
         encoding="utf-8",
     )
-    (path / "sounds" / "music" / "Add Music Here.txt").write_text(
+    (target / "sounds" / "music" / "Add Music Here.txt").write_text(
         "Music tracks go here, as .ogg files.\n\n"
         "In a script, a track named haggstrom.ogg is referenced as:\n\n"
         "    haggstrom\n",
         encoding="utf-8",
     )
 
+    save_project(virtual_slug, merged, {"main.story": list(DEFAULT_MAIN)})
+    return load_project(virtual_slug)
+
+
+
+
+def create_event(game_slug: str, event: str, meta: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Create a nested story under a game project.
+
+    Games are the only top-level projects: stories live under
+    events/<event>/ inside a game, sharing the game's asset pool.
+    """
+    if not SLUG_RE.match(event or ""):
+        raise ProjectError(f"Invalid event name: {event!r}")
+    if "::" in game_slug:
+        raise ProjectError(f"Game '{game_slug}' must be a flat name")
+    game_dir = project_dir(game_slug)
+    game_meta_file = game_dir / "project.json"
+    if not game_meta_file.is_file():
+        raise ProjectError(f"Game '{game_slug}' does not exist")
+    try:
+        game_meta = json.loads(game_meta_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ProjectError(f"project.json is not valid JSON: {e}") from e
+    if game_meta.get("kind") not in (None, "game"):
+        raise ProjectError(f"Project '{game_slug}' is not a game project")
+    target = (game_dir / EVENTS_DIRNAME / event).resolve()
+    if game_dir.resolve() not in target.parents:
+        raise ProjectError("Invalid event path")
+    if target.exists() and any(target.iterdir()):
+        raise ProjectError(f"Event '{event}' already exists")
     merged = dict(DEFAULT_PROJECT)
     if meta:
         merged.update(meta)
-    merged["character"] = merged.get("character") or slug
+    if not merged.get("character"):
+        merged["character"] = event
+    return _story_scaffold(target, f"{game_slug}::{event}", merged)
 
-    save_project(slug, merged, {"main.story": list(DEFAULT_MAIN)})
-    return load_project(slug)
+
+def create_project(slug: str, meta: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Any top-level project is a game.
+
+    Stories no longer exist as top-level projects; they live under
+    events/<event>/ of a game project (see create_event).
+    """
+    merged = dict(meta or {})
+    merged["kind"] = "game"
+    return create_game_project(slug, merged)
 
 
 def delete_project(slug: str) -> None:
@@ -393,6 +455,15 @@ def create_game_project(slug: str, meta: dict[str, Any] | None = None) -> dict[s
     (path / "events").mkdir()
     world = path / "world"
     world.mkdir()
+
+    (path / "images" / "characters" / "Add Character Sprite Here.txt").write_text(
+        "Character sprites go in folders here. " + chr(10) + "The format is name/outfit/image.png " + chr(10) + "like: cupa/default/happy.png" + chr(10),
+        encoding="utf-8",
+    )
+    (path / "images" / "asset" / "Add Background Here.txt").write_text(
+        "Backgrounds go here, flat. Scripts reference them as: asset/end.png" + chr(10),
+        encoding="utf-8",
+    )
 
     (world / VARIABLES_FILE_NAME).write_text(
         json.dumps({"variables": []}, indent=2) + "\n", encoding="utf-8"
@@ -494,7 +565,7 @@ def duplicate_project(slug: str, new_slug: str) -> dict[str, Any]:
     src = project_dir(slug)
     if not src.is_dir():
         raise ProjectError(f"Project '{slug}' does not exist")
-    dest = project_dir(new_slug)
+    dest = dest_dir(new_slug)
     if dest.exists() and any(dest.iterdir()):
         raise ProjectError(f"Project '{new_slug}' already exists")
     shutil.copytree(src, dest)
@@ -505,7 +576,7 @@ def rename_project(slug: str, new_slug: str) -> dict[str, Any]:
     src = project_dir(slug)
     if not src.is_dir():
         raise ProjectError(f"Project '{slug}' does not exist")
-    dest = project_dir(new_slug)
+    dest = dest_dir(new_slug)
     if dest.exists() and any(dest.iterdir()):
         raise ProjectError(f"Project '{new_slug}' already exists")
     src.rename(dest)
@@ -513,23 +584,44 @@ def rename_project(slug: str, new_slug: str) -> dict[str, Any]:
 
 
 def import_project_zip(slug: str, payload: bytes) -> dict[str, Any]:
-    """Import a .hikarin.zip project bundle (or any zip containing project.json)."""
+    """Import a .hikarin.zip game bundle (or any zip containing project.json).
+
+    Bundles made from a game project import cleanly: project.json carries
+    kind=game with events/ and world/. A loose standalone story bundle is
+    refused: stories live inside games, so make a game and add the story as
+    an event instead.
+    """
+    if not SLUG_RE.match(slug or ""):
+        raise ProjectError(f"Invalid project name: {slug!r}")
+
     dest = project_dir(slug)
     if dest.exists() and any(dest.iterdir()):
         raise ProjectError(f"Project '{slug}' already exists")
+
     try:
         zf = zipfile.ZipFile(io.BytesIO(payload))
     except zipfile.BadZipFile as e:
         raise ProjectError(f"Not a valid zip file: {e}") from e
 
     names = zf.namelist()
-    # Find project.json at root or one level deep
     prefix = ""
     if "project.json" not in names:
         candidates = [n for n in names if n.endswith("/project.json")]
         if len(candidates) != 1:
             raise ProjectError("Zip must contain a single project.json")
-        prefix = candidates[0][:-len("project.json")]
+        prefix = candidates[0][: -len("project.json")]
+    meta_member = f"{prefix}project.json"
+
+    try:
+        meta = json.loads(zf.read(meta_member).decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise ProjectError(f"project.json is not valid JSON: {e}") from e
+    kind = (meta or {}).get("kind")
+    if kind != "game":
+        raise ProjectError(
+            "This bundle contains a standalone story, which cannot exist on its own. "
+            "Create a game, add the story as an event, and import the files there."
+        )
 
     dest_path = dest.resolve()
     dest.mkdir(parents=True, exist_ok=True)
@@ -537,24 +629,17 @@ def import_project_zip(slug: str, payload: bytes) -> dict[str, Any]:
         for name in names:
             if name.endswith("/"):
                 continue
-            rel = name[len(prefix):] if prefix else name
-            target = (dest / rel)
-            # guard traversal
+            rel = name[len(prefix) :] if prefix else name
+            target = dest / rel
             try:
                 target.resolve().relative_to(dest_path)
             except ValueError:
-                raise ProjectError(f"Zip entry escapes project folder: {name}")
+                raise ProjectError(f"Zip entry escapes project folder: {name}") from None
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(zf.read(name))
     except Exception:
         shutil.rmtree(dest, ignore_errors=True)
         raise
 
-    if not (dest / "project.json").is_file():
-        shutil.rmtree(dest, ignore_errors=True)
-        raise ProjectError("Zip must contain project.json")
-    try:
-        return load_project(slug)
-    except ProjectError:
-        shutil.rmtree(dest, ignore_errors=True)
-        raise
+    (dest / EVENTS_DIRNAME).mkdir(exist_ok=True)
+    return load_project(slug)

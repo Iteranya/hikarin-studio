@@ -744,7 +744,7 @@ async function createNewEvent() {
   const res = await fetch(`/api/projects/${state.project.slug}/events`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ event: name, packName: name.title() }),
+    body: JSON.stringify({ event: name, packName: name.charAt(0).toUpperCase() + name.slice(1) }),
   });
   if (!res.ok) { uiAlert((await res.json()).detail || 'Could not create the story.'); return; }
   await loadEventsEditor();

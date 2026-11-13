@@ -59,6 +59,7 @@ async function boot() {
   // changed underneath it.
   initAssets({ state, onChange: onAssetsChanged });
   await refreshProjectList();
+  await showLauncher();
   wireChrome();
   wireLauncher();
   wireMobileNav();
@@ -112,6 +113,7 @@ const launcher = {
 };
 
 async function showLauncher() {
+  setTopbarVisible(false);
   launcher.projects = await fetch('/api/projects').then((r) => r.json()).catch(() => []);
   document.getElementById('launcher').hidden = false;
   const input = document.getElementById('launcher-search');
@@ -123,6 +125,11 @@ function hideLauncher() {
   const el = document.getElementById('launcher');
   if (el) el.hidden = true;
 }
+function setTopbarVisible(visible) {
+  const bar = document.getElementById('topbar');
+  if (bar) bar.classList.toggle('topbar-hidden', !visible);
+}
+
 
 function renderLauncher() {
   const grid = document.getElementById('launcher-grid');
@@ -139,7 +146,7 @@ function renderLauncher() {
   if (!list.length) {
     grid.innerHTML = launcher.filter
       ? `<div class="launcher-empty"><div class="launcher-empty-title">No matches for "${escapeLauncher(launcher.filter)}"</div><div>Try clearing the filter.</div></div>`
-      : `<div class="launcher-empty"><div class="launcher-empty-title">No projects yet</div><div>Press <b>New Story</b> for a visual-novel script, or <b>New Game</b> for an orchestrator-driven world.</div></div>`;
+      : `<div class="launcher-empty"><div class="launcher-empty-title">No games yet</div><div>Press <b>New</b> to create a game. Stories live inside games as events — and get their own cards on the Events tab.</div></div>`;
     return;
   }
 
@@ -214,14 +221,14 @@ async function launcherDelete(slug) {
   await showLauncher();
 }
 
-async function launcherNew(kind) {
-  const slug = await uiPrompt(kind === 'game' ? 'Game name (lowercase, no spaces)' : 'Project name (lowercase, no spaces)');
+async function launcherNew() {
+  const slug = await uiPrompt('Game name (lowercase, no spaces)');
   if (!slug) return;
-  const packName = await uiPrompt(kind === 'game' ? 'Game title' : 'Story title', slug) || slug;
+  const packName = await uiPrompt('Game title', slug) || slug;
   const res = await fetch('/api/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, meta: { kind, packName, character: slug } }),
+    body: JSON.stringify({ slug, meta: { kind: 'game', packName, character: slug } }),
   });
   if (!res.ok) { uiAlert((await res.json()).detail || 'Could not create the project.'); return; }
   hideLauncher();
@@ -242,14 +249,18 @@ function wireLauncher() {
     launcher.filter = e.target.value;
     renderLauncher();
   });
-  document.getElementById('launcher-new-story')?.addEventListener('click', () => launcherNew('story'));
-  document.getElementById('launcher-new-game')?.addEventListener('click', () => launcherNew('game'));
+  document.getElementById('launcher-new')?.addEventListener('click', () => launcherNew());
   document.getElementById('launcher-import')?.addEventListener('click', () => document.getElementById('file-import').click());
 }
 
 async function refreshProjectList() {
-  const projects = await fetch('/api/projects').then((r) => r.json());
   const sel = document.getElementById('project-select');
+  // Inside a story: the dropdown is the game's story list, not the project list.
+  if (state.project?.nested) {
+    await refreshStoryChoices(state.project.nested.game, state.project.nested.event);
+    return;
+  }
+  const projects = await fetch('/api/projects').then((r) => r.json());
   if (sel) {
     const current = state.project?.slug;
     sel.innerHTML = '';
@@ -265,14 +276,33 @@ async function refreshProjectList() {
     setStatus('compile', 'no projects yet — press New', 'warn');
     return;
   }
-  // Auto-open the most recently modified project so a reload resumes work.
-  // Boot (and fresh returns) land on the project manager page, not a story.
-  await showLauncher();
+}
+
+/** Fill the story dropdown with the parent game's stories. */
+async function refreshStoryChoices(gameSlug, currentEvent) {
+  const sel = document.getElementById('project-select');
+  if (!sel) return;
+  try {
+    const data = await fetch(`/api/projects/${gameSlug}/events`).then((r) => r.json());
+    const events = data.events ?? [];
+    sel.title = 'Open a story in this game';
+    sel.innerHTML = '';
+    for (const e of events) {
+      const opt = document.createElement('option');
+      opt.value = e.slug;
+      opt.textContent = (e.packName || e.character || e.slug) + ' (' + e.slug + ')';
+      if (e.slug === currentEvent) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  } catch (err) {
+    console.warn('story list refresh failed', err);
+  }
 }
 
 async function openProject(slug) {
   hideLauncher();
   $('btn-back-game').hidden = true;
+  setTopbarVisible(true);
   // Whatever is on screen has to be on disk before the next project's files are
   // read, or an autosave can land on the project you just left.
   if (state.project) await flushAutosave();
@@ -284,6 +314,7 @@ async function openProject(slug) {
     // Game projects bypass the story editor entirely; nobody should be
     // staring at the dialogue blocks for a world graph.
     closeGameEditor(); // closed state reset, then re-open below
+    setTopbarVisible(false);
     $('game-shell').hidden = false;
     document.querySelector('.workspace').style.visibility = 'hidden';
     document.getElementById('empty-state')?.setAttribute('hidden', 'hidden');
@@ -356,6 +387,8 @@ export async function openNestedStory(gameSlug, eventSlug) {
   $('btn-compile').disabled = false;
   $('btn-assets').disabled = false;
   $('btn-back-game').hidden = false;
+  setTopbarVisible(true);
+  refreshStoryChoices(gameSlug, eventSlug);
 
   const emptyState = $('empty-state');
   if (emptyState) emptyState.hidden = true;
@@ -1929,7 +1962,12 @@ function wireChrome() {
     if (nested) openProject(nested.game);
   };
   $('btn-add-say').onclick = addSayBlock;
-  document.getElementById('project-select').onchange = (e) => { if (e.target.value) openProject(e.target.value); };
+  document.getElementById('project-select').onchange = (e) => {
+    const v = e.target.value;
+    if (!v) return;
+    if (state.project?.nested) openNestedStory(state.project.nested.game, v);
+    else openProject(v);
+  };
   document.getElementById('file-import').onchange = importProjectFile;
 
   // Last line of defence: the tab is closing mid-edit, before the debounce
@@ -1965,23 +2003,39 @@ function wireChrome() {
 }
 
 async function newProject() {
-  const slug = await uiPrompt('Project name (lowercase, no spaces)');
+  const nested = state.project?.nested;
+  if (nested) {
+    // Inside a story: New means a fresh story event in this game.
+    const event = await uiPrompt('New story name (lowercase, no spaces)');
+    if (!event) return;
+    const title = await uiPrompt('Story title', event.charAt(0).toUpperCase() + event.slice(1)) || event;
+    const res = await fetch(`/api/projects/${nested.game}/events`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, packName: title }),
+    });
+    if (!res.ok) { uiAlert((await res.json()).detail || 'Could not create the story.'); return; }
+    await openNestedStory(nested.game, event);
+    return;
+  }
+  const slug = await uiPrompt('Game name (lowercase, no spaces)');
   if (!slug) return;
-  const packName = await uiPrompt('Story title', slug) || slug;
+  const packName = await uiPrompt('Game title', slug) || slug;
 
   const res = await fetch('/api/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, meta: { packName, character: slug } }),
+    body: JSON.stringify({ slug, meta: { kind: 'game', packName, character: slug } }),
   });
 
   if (!res.ok) {
     const err = await res.json();
-    uiAlert(err.detail || 'Could not create the project.');
+    uiAlert(err.detail || 'Could not create the game.');
     return;
   }
   await openProject(slug);
 }
+
+
 
 /** The exact payload the server expects, built from live state. */
 function saveBody(project = state.project) {
@@ -2107,6 +2161,18 @@ async function exportPack() {
 
 async function duplicateProject() {
   if (!state.project) return;
+  if (state.project.nested) {
+    const { game, event } = state.project.nested;
+    const new_event = await uiPrompt('New story name (lowercase, no spaces)', event + '-copy');
+    if (!new_event) return;
+    const res = await fetch(`/api/projects/${game}::${event}/duplicate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_slug: `${game}::${new_event}` }),
+    });
+    if (!res.ok) { uiAlert((await res.json()).detail || 'Duplicate failed'); return; }
+    await openNestedStory(game, new_event);
+    return;
+  }
   const new_slug = await uiPrompt('New project name (lowercase, no spaces)', state.project.slug + '-copy');
   if (!new_slug) return;
   const res = await fetch(`/api/projects/${state.project.slug}/duplicate`, {
@@ -2114,12 +2180,24 @@ async function duplicateProject() {
     body: JSON.stringify({ new_slug }),
   });
   if (!res.ok) { uiAlert((await res.json()).detail || 'Duplicate failed'); return; }
-  await refreshProjectList();
   await openProject(new_slug);
 }
 
+
 async function renameProject() {
   if (!state.project) return;
+  if (state.project.nested) {
+    const { game, event } = state.project.nested;
+    const new_event = await uiPrompt('New story name (lowercase, no spaces)', event);
+    if (!new_event || new_event === event) return;
+    const res = await fetch(`/api/projects/${game}::${event}/rename`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_slug: `${game}::${new_event}` }),
+    });
+    if (!res.ok) { uiAlert((await res.json()).detail || 'Rename failed'); return; }
+    await openNestedStory(game, new_event);
+    return;
+  }
   const new_slug = await uiPrompt('New project name (lowercase, no spaces)', state.project.slug);
   if (!new_slug || new_slug === state.project.slug) return;
   const res = await fetch(`/api/projects/${state.project.slug}/rename`, {
@@ -2127,19 +2205,29 @@ async function renameProject() {
     body: JSON.stringify({ new_slug }),
   });
   if (!res.ok) { uiAlert((await res.json()).detail || 'Rename failed'); return; }
-  await refreshProjectList();
   await openProject(new_slug);
 }
 
+
 async function deleteProject() {
   if (!state.project) return;
+  if (state.project.nested) {
+    const { game, event } = state.project.nested;
+    if (!await uiConfirm(`Delete story "${event}"? This removes the folder events/${event} with all its .story files.`)) return;
+    const res = await fetch(`/api/projects/${game}::${event}`, { method: 'DELETE' });
+    if (!res.ok) { uiAlert((await res.json()).detail || 'Delete failed'); return; }
+    state.project = null;
+    await openProject(game);
+    return;
+  }
   if (!await uiConfirm(`Delete project "${state.project.slug}"? This removes its folder and all .story files.`)) return;
   const slug = state.project.slug;
   const res = await fetch(`/api/projects/${slug}`, { method: 'DELETE' });
   if (!res.ok) { uiAlert((await res.json()).detail || 'Delete failed'); return; }
   state.project = null;
-  await refreshProjectList();
+  await showLauncher();
 }
+
 
 async function importProjectFile(e) {
   const file = e.target.files?.[0];

@@ -274,15 +274,20 @@ def build_project_bundle(meta, files, project_path: Path) -> bytes:
         meta2 = dict(meta)
         meta2["files"] = list(files.keys())
         zf.writestr("project.json", json.dumps(meta2, indent=2, ensure_ascii=False) + "\n")
+        written = set()
         for name, blocks in files.items():
             zf.writestr(name, json.dumps(blocks, indent=2, ensure_ascii=False) + "\n")
+            written.add(name)
         # assets
-        for sub in ("images", "sounds"):
+        for sub in ("images", "sounds", "world", "events"):
             root = project_path / sub
             if root.is_dir():
                 for f in sorted(root.rglob("*")):
                     if f.is_file():
-                        zf.write(f, f.relative_to(project_path).as_posix())
+                        rel = f.relative_to(project_path).as_posix()
+                        if rel in written:
+                            continue
+                        zf.write(f, rel)
     return buffer.getvalue()
 
 

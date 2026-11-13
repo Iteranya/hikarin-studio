@@ -16,35 +16,48 @@ from hikarin.exporter import build_json, build_markdown, build_project_bundle, b
 @pytest.fixture
 def temp_root(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "PROJECTS_ROOT", tmp_path)
+    store.create_game_project("game")
+    store.create_event("game", "cupa")
     return tmp_path
 
 
-def test_duplicate_project_copies_stories(temp_root):
-    store.create_project("cupa")
-    dup = store.duplicate_project("cupa", "cupa-copy")
-    assert dup["slug"] == "cupa-copy"
-    assert (temp_root / "cupa-copy" / "project.json").is_file()
-    assert (temp_root / "cupa-copy" / "main.story").is_file()
+def test_duplicate_project_copies_everything(temp_root):
+    dup = store.duplicate_project("game", "game-copy")
+    assert dup["slug"] == "game-copy"
+    assert (temp_root / "game-copy" / "project.json").is_file()
+    assert (temp_root / "game-copy" / "world" / "maps.json").is_file()
+    assert (temp_root / "game-copy" / "events" / "cupa" / "main.story").is_file()
     with pytest.raises(store.ProjectError):
-        store.duplicate_project("cupa", "cupa-copy")
+        store.duplicate_project("game", "game-copy")
 
 
 def test_rename_project_moves_folder(temp_root):
-    store.create_project("cupa")
-    r = store.rename_project("cupa", "moriya")
+    r = store.rename_project("game", "moriya")
     assert r["slug"] == "moriya"
-    assert not (temp_root / "cupa").exists()
+    assert not (temp_root / "game").exists()
     assert (temp_root / "moriya" / "project.json").is_file()
 
 
-def test_import_bundle_roundtrip(temp_root):
-    store.create_project("cupa")
-    loaded = store.load_project("cupa")
+def test_import_game_bundle_roundtrip(temp_root):
+    loaded = store.load_project("game")
     meta, files = loaded["meta"], loaded["files"]
-    bundle = build_project_bundle(meta, files, temp_root / "cupa")
-    imported = store.import_project_zip("cupa-imported", bundle)
-    assert imported["slug"] == "cupa-imported"
-    assert (temp_root / "cupa-imported" / "main.story").is_file()
+    bundle = build_project_bundle(meta, files, temp_root / "game")
+    imported = store.import_project_zip("imported", bundle)
+    assert imported["slug"] == "imported"
+    assert (temp_root / "imported" / "project.json").is_file()
+    assert (temp_root / "imported" / "world" / "maps.json").is_file()
+    assert (temp_root / "imported" / "events" / "cupa" / "main.story").is_file()
+
+
+def test_import_story_bundle_refused(temp_root):
+    bundle = build_project_bundle(
+        {"kind": "story", "character": "cupa", "packFormat": 15},
+        {"main.story": [{"kind": "label", "data": {"name": "start"}}]},
+        temp_root / "game" / "events" / "cupa",
+    )
+    with pytest.raises(store.ProjectError, match="standalone story"):
+        store.import_project_zip("refused", bundle)
+    assert not (temp_root / "refused").exists()
 
 
 def test_import_rejects_bad_zip(temp_root):

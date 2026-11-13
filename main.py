@@ -374,48 +374,11 @@ class EventCreateRequest(BaseModel):
 def create_story_event(slug: str, req: EventCreateRequest):
     """Create a fresh nested story event under events/<name>/."""
     try:
-        game_dir = project_store.project_dir(slug)
-        game_meta_file = game_dir / "project.json"
-        game_meta = json.loads(game_meta_file.read_text(encoding="utf-8"))
-        if game_meta.get("kind") != "game":
-            raise HTTPException(status_code=400, detail=f"Project '{slug}' is not a game project")
-        base = (game_dir / "events" / req.event).resolve()
-        if game_dir.resolve() not in base.parents:
-            raise HTTPException(status_code=400, detail="Invalid event path")
-        if base.exists():
-            raise HTTPException(status_code=400, detail=f"Event '{req.event}' already exists")
-        base.mkdir(parents=True)
-        (base / "project.json").write_text(
-            json.dumps(
-                {
-                    "kind": "story",
-                    "character": req.event,
-                    "packName": req.packName or req.event.title(),
-                    "packFormat": 15,
-                    "description": "Made with Hikarin Studio",
-                    "files": ["main.story"],
-                    "startLabel": "start",
-                },
-                indent=2,
-            )
-            + chr(10),
-            encoding="utf-8",
-        )
-        (base / "main.story").write_text(
-            json.dumps(
-                [
-                    {"kind": "label", "data": {"name": "start"}},
-                    {"kind": "say", "data": {"label": "", "content": "Hello."}},
-                    {"kind": "end", "data": {}},
-                ],
-                indent=2,
-            )
-            + chr(10),
-            encoding="utf-8",
-        )
+        meta = {"packName": req.packName} if req.packName else None
+        project_store.create_event(slug, req.event, meta)
         return {"ok": True, "event": req.event}
     except project_store.ProjectError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # ── assets ──────────────────────────────────────────────────────────────────

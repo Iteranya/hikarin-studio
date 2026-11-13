@@ -16,43 +16,40 @@ from hikarin.exporter import build_pack, export_filename
 @pytest.fixture
 def temp_root(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "PROJECTS_ROOT", tmp_path)
+    store.create_game_project("game")
+    store.create_event("game", "cupa")
     return tmp_path
 
 
-def test_create_project_scaffolds_mediafile_layout(temp_root):
-    """The folder shape mirrors the SDK's mediafile directory."""
-    p = store.create_project("cupa")
-    root = temp_root / "cupa"
+def test_create_event_scaffolds_nested_story(temp_root):
+    """Events are stories nested inside games."""
+    loaded = store.load_project("game::cupa")
+    root = temp_root / "game" / "events" / "cupa"
 
-    assert p["slug"] == "cupa"
+    assert loaded["slug"] == "game::cupa"
+    assert loaded["nested"] is True
     assert (root / "project.json").is_file()
     assert (root / "main.story").is_file()
-    assert "main.story" in p["files"]
+    assert "main.story" in loaded["files"]
 
-    assert (root / "images" / "characters").is_dir()
-    assert (root / "images" / "asset").is_dir()
-    assert (root / "sounds" / "music").is_dir()
-    assert (root / "sounds" / "sound").is_dir()
-
-    # A note in each folder so the layout explains itself in Explorer.
-    assert (root / "images" / "characters" / "Add Character Sprite Here.txt").is_file()
-    assert (root / "images" / "asset" / "Add Background Here.txt").is_file()
+    # assets are shared pool files at the game root, not per event
+    assert (temp_root / "game" / "images" / "characters").is_dir()
+    assert (temp_root / "game" / "images" / "asset").is_dir()
+    assert (temp_root / "game" / "images" / "characters" / "Add Character Sprite Here.txt").is_file()
 
 
-def test_create_rejects_duplicate(temp_root):
-    store.create_project("cupa")
+def test_create_event_rejects_duplicate(temp_root):
     with pytest.raises(store.ProjectError):
-        store.create_project("cupa")
-
+        store.create_event("game", "cupa")
+    
 
 @pytest.mark.parametrize("bad", ["../evil", "has space", "", "UPPER", "a/b"])
 def test_create_rejects_bad_slugs(temp_root, bad):
     with pytest.raises(store.ProjectError):
-        store.create_project(bad)
+        store.create_event("game", bad)
 
 
 def test_save_and_load_roundtrip(temp_root):
-    store.create_project("cupa")
     meta = {"character": "cupa", "startLabel": "start", "packName": "Cupa's Story"}
     files = {
         "main.story": [
@@ -61,30 +58,28 @@ def test_save_and_load_roundtrip(temp_root):
             {"kind": "end", "data": {}},
         ]
     }
-    store.save_project("cupa", meta, files)
-    loaded = store.load_project("cupa")
+    store.save_project("game::cupa", meta, files)
+    loaded = store.load_project("game::cupa")
     assert loaded["files"]["main.story"] == files["main.story"]
     assert loaded["meta"]["packName"] == "Cupa's Story"
 
 
 def test_save_deletes_removed_files(temp_root):
-    store.create_project("cupa")
-    store.save_project("cupa", {"startLabel": "start"}, {
+    store.save_project("game::cupa", {"startLabel": "start"}, {
         "main.story": [{"kind": "label", "data": {"name": "start"}}],
         "night.story": [{"kind": "label", "data": {"name": "night"}}],
     })
-    assert (temp_root / "cupa" / "night.story").is_file()
+    assert (temp_root / "game" / "events" / "cupa" / "night.story").is_file()
 
-    store.save_project("cupa", {"startLabel": "start"}, {
+    store.save_project("game::cupa", {"startLabel": "start"}, {
         "main.story": [{"kind": "label", "data": {"name": "start"}}],
     })
-    assert not (temp_root / "cupa" / "night.story").exists(), "deleted tab must not linger on disk"
+    assert not (temp_root / "game" / "events" / "cupa" / "night.story").exists(), "deleted tab must not linger on disk"
 
 
 def test_asset_inventory_reads_mediafile_layout(temp_root):
     """images/characters/<id>/<outfit>/<emotion>.png, per the SDK's mediafile."""
-    store.create_project("cupa")
-    root = temp_root / "cupa"
+    root = temp_root / "game"
 
     default_dir = root / "images" / "characters" / "cupa" / "default"
     default_dir.mkdir(parents=True, exist_ok=True)
@@ -114,8 +109,7 @@ def test_asset_inventory_reads_mediafile_layout(temp_root):
 
 def test_asset_inventory_ignores_pack_icon(temp_root):
     """images/pack.png is the resource pack icon, not story content."""
-    store.create_project("cupa")
-    root = temp_root / "cupa"
+    root = temp_root / "game"
     (root / "images" / "pack.png").write_bytes(b"x")
 
     inventory = store.list_assets(root)
@@ -124,16 +118,15 @@ def test_asset_inventory_ignores_pack_icon(temp_root):
 
 
 def test_export_builds_real_resource_pack(temp_root):
-    store.create_project("cupa")
     meta = {"character": "cupa", "packName": "Cupa's Story", "packFormat": 15}
     files = {"main.story": [
         {"kind": "label", "data": {"name": "start"}},
         {"kind": "say", "data": {"label": "Cupa", "content": "Hi."}},
         {"kind": "end", "data": {}},
     ]}
-    store.save_project("cupa", meta, files)
+    store.save_project("game::cupa", meta, files)
 
-    root = temp_root / "cupa"
+    root = temp_root / "game"
     sprite = root / "images" / "characters" / "cupa" / "default"
     sprite.mkdir(parents=True, exist_ok=True)
     (sprite / "happy.png").write_bytes(b"PNGDATA")
@@ -185,8 +178,7 @@ def test_export_filename_is_safe():
 
 def test_asset_inventory_indexes_plain_image_folders(temp_root):
     """images/asset/ doubles as the pool for show_custom boxes."""
-    store.create_project("cupa")
-    root = temp_root / "cupa"
+    root = temp_root / "game"
     (root / "images" / "asset" / "old-dsl.png").write_bytes(b"x")
     (root / "images" / "asset" / "void.png").write_bytes(b"x")
 
@@ -194,3 +186,17 @@ def test_asset_inventory_indexes_plain_image_folders(temp_root):
     assert inventory["folders"]["asset"] == ["old-dsl", "void"]
     # and still listed as backgrounds, since a Background block uses the same file
     assert "asset/old-dsl.png" in inventory["backgrounds"]
+
+
+def test_create_project_is_always_a_game(temp_root):
+    """No standalone stories: new top-level projects are always games."""
+    g = store.create_project("marchinia", {"kind": "story", "packName": "Marchinia"})
+    assert g["meta"]["kind"] == "game"
+    with open(temp_root / "marchinia" / "project.json", encoding="utf-8") as f:
+        assert json.load(f)["kind"] == "game"
+
+
+def test_create_event_requires_a_game(temp_root):
+    store.create_game_project("carpatia")
+    with pytest.raises(store.ProjectError):
+        store.create_event("nope-does-not-exist", "alpha")

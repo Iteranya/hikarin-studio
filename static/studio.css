@@ -1360,3 +1360,5 @@ html, body {
 .game-event-card-actions { display: flex; gap: 6px; border-top: 1px solid var(--border); padding-top: 8px; margin-top: auto; }
 .game-event-card-actions .btn { flex: 1 1 auto; }
 .game-event-card-actions .btn.danger { background: #3a1a1e; color: #f3b7c0; border-color: #5b2430; }
+
+.topbar-hidden { display: none !important; }

@@ -17,8 +17,8 @@ from hikarin import assets, projects as store
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "PROJECTS_ROOT", tmp_path)
-    store.create_project("cupa")
-    return tmp_path / "cupa"
+    store.create_game_project("game")
+    return tmp_path / "game"
 
 
 # ── names ───────────────────────────────────────────────────────────────────
