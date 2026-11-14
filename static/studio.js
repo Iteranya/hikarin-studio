@@ -722,9 +722,8 @@ function textField(key, label, placeholder = '', hint = '') {
  * An author declares `affection` once in the manager and every block picks it.
  * The escape hatch matters: a writer mid-scene invents `seen_door_3`, and a
  * picker that forbade typing would push them into the manager mid-sentence. So
- * this is an input with a datalist — the registry suggests, the keyboard still
- * works, and the block's own scope is left alone because a name can legitimately
- * be read under more than one scope.
+ * a local is this story's own scratch name, so it is a plain input: no
+ * suggestions, nothing to pick, nothing to keep in sync.
  *
  * The scope follows the variable's default only when the field is empty. Once a
  * scope is set — by a previous pick or by hand — it wins, because changing it
