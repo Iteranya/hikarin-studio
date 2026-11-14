@@ -9,16 +9,24 @@ hand-written ids: every reference is a label name, so you can reorder freely and
 the compiler resolves it.
 
 It is a content pipeline, not a game engine. It does not run the story; it
-produces the files something else runs. That something else is a resource pack
-loader: a pack is a folder of compiled scripts plus the art they reference, which
-is what the studio exports.
+produces files something else runs.
 
 ```
-blocks in the editor  ->  compile  ->  one JSON per character  ->  resource pack
+blocks in the editor  ->  compile  ->  one JSON per character  ->  a folder
 ```
 
-Because a pack can hold several characters, a project holds several stories, and
-the art is shared between them. More on that below.
+That folder is the deliverable, and it comes in two shapes. **Hikarin** is the
+format this project is named after: a `manifest.json`, one script per story at the
+root, and `images/` and `sounds/` exactly as you authored them. **Resource pack**
+is the same content arranged for one runtime's loader — a `pack.mcmeta`, an
+`assets/hikarin/` prefix, and a `textures/` rename. Same scripts, different
+packaging convention.
+
+Reach for Hikarin unless you are specifically feeding a resource pack loader. It
+is the neutral one.
+
+A project can hold several characters, so it holds several stories, and the art is
+shared between them. More on that below.
 
 ## Why this exists
 
@@ -100,7 +108,7 @@ once a month.
 Three levels. The distinction is the design.
 
 ```
-projects/<project>/          a project = one resource pack
+projects/<project>/          a project = one pack
   project.json               pack name, description
   variables.json             declared global variables
   stories/
@@ -243,8 +251,8 @@ labels that field "Otherwise, jump to" for this reason — an earlier label of
 ## Export
 
 Export is a dialog, not a button. The format and its options are choices, and a
-one-click export makes them silently — which is how a resource pack gets exported
-and then imported as a project bundle.
+one-click export makes them silently — which is how a resource pack ends up
+imported where a Hikarin bundle was wanted.
 
 The menu is drawn from `hikarin/export_formats.py`, which is data, not UI:
 
@@ -254,7 +262,7 @@ The menu is drawn from `hikarin/export_formats.py`, which is data, not UI:
     "label": "Resource pack",
     "extension": ".zip",
     "scope": "project",          # or "story"
-    "hint": "What the runtime loads…",
+    "hint": "The same scripts arranged for a resource pack loader…",
     "params": [
         {"key": "pack_format", "label": "Format version",
          "type": "number", "default": 15, "hint": "…"}
@@ -267,18 +275,58 @@ and `select`, so a format needing a name, a target or a variant needs no new UI
 code. `main.py` maps an id to a builder; the registry knows how to *describe* a
 format, never how to build one.
 
+The default selection is **Hikarin**, because it is the one that does not assume
+anything about the consumer.
+
 | scope | id | output |
 |---|---|---|
-| project | `pack` | Resource pack `.zip` — every story, one JSON each, plus shared textures and sounds |
+| project | `hikarin` | **Hikarin** `.zip` — `manifest.json`, one script per story at the root, art as authored |
+| project | `pack` | Resource pack `.zip` — same scripts, arranged for a pack loader |
 | project | `bundle` | Project bundle `.hikarin.zip` — re-importable, carries blocks not actions |
 | story | `json` | Compiled actions for one story |
 | story | `txt` | Plain-text script |
 | story | `md` | Markdown script, labels as `##` headings |
 
-**A pack and a bundle are both `.zip`.** A pack is what the game loads
-(`pack.mcmeta` and `assets/`); a bundle is what this tool re-imports
-(`project.json` and `stories/`). Importing a pack explains that difference rather
-than reporting a corrupt file.
+### Hikarin vs resource pack
+
+Same compiled scripts. The difference is packaging, and it is worth knowing which
+you are holding:
+
+```
+Hikarin                        Resource pack
+───────                        ─────────────
+manifest.json                  pack.mcmeta
+cupa.json                      assets/hikarin/cupa.json
+images/asset/room.png          assets/hikarin/textures/asset/room.png
+sounds/music/haggstrom.ogg     assets/hikarin/sounds/music/haggstrom.ogg
+```
+
+Hikarin keeps the folder names you authored and adds only a `manifest.json`, so a
+consumer does not have to guess which files are scripts or which trigger maps to
+which story:
+
+```json
+{
+  "format": "hikarin",
+  "version": 1,
+  "packName": "...",
+  "namespace": "hikarin",
+  "scripts": [
+    { "story": "cupa", "character": "cupa",
+      "file": "cupa.json", "actions": 4, "startLabel": "start" }
+  ],
+  "images": "images/",
+  "sounds": "sounds/"
+}
+```
+
+The resource pack layout is a convention one runtime's loader expects. Neither is
+more correct; the pack exists because something reads it, and the Hikarin bundle
+exists because most things do not.
+
+**All three project formats are `.zip`.** Hikarin and resource pack are compiled
+scripts; the project bundle is authoring blocks, for re-importing. Importing one
+of the first two explains the difference rather than reporting a corrupt file.
 
 The resource pack version is an export option, not project state. The same
 scripts build for several runtime versions.

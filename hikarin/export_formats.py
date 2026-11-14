@@ -40,12 +40,22 @@ from typing import Any
 DEFAULT_PACK_FORMAT = 15
 
 EXPORT_FORMATS: list[dict[str, Any]] = [
+    # First, because it is the neutral one: the same compiled scripts without a
+    # packaging convention borrowed from any particular runtime.
+    {
+        "id": "hikarin",
+        "label": "Hikarin",
+        "extension": ".zip",
+        "scope": "project",
+        "hint": "Runtime-agnostic: manifest.json, one script per story at the root, and the images and sounds as authored. Reach for this unless something specifically wants a resource pack.",
+        "params": [],
+    },
     {
         "id": "pack",
         "label": "Resource pack",
         "extension": ".zip",
         "scope": "project",
-        "hint": "What the runtime loads: pack.mcmeta, one compiled script per story, and the shared images and sounds.",
+        "hint": "The same scripts arranged for a resource pack loader: pack.mcmeta, an assets/hikarin/ prefix, and images/ renamed to textures/.",
         "params": [
             {
                 "key": "pack_format",

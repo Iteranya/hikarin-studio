@@ -1,19 +1,31 @@
-"""Resource pack export.
+"""Export builders.
 
-Takes a project's compiled stories and produces a loadable resource pack::
+Two shapes for the same compiled scripts:
+
+:func:`build_hikarin` — the Hikarin bundle. ``manifest.json``, one script per
+story at the root, art as authored. Runtime-agnostic, and the default to reach
+for.
+:func:`build_pack` — a resource pack. The same scripts arranged for a loader
+that expects ``pack.mcmeta``, an ``assets/<namespace>/`` prefix and a
+``textures/`` rename.
+
+Also here: the human-readable script renderers (``.txt`` / ``.md``) and the
+re-importable project bundle.
+
+---
+
+Resource pack layout::
 
     <pack>.zip
         pack.mcmeta
         pack.png                             (optional)
         assets/hikarin/<story>.json          <- one compiled story per character
-        assets/hikarin/<story>.json          ...
         assets/hikarin/textures/...          <- copied from the project's images/
         assets/hikarin/sounds/...            <- copied from the project's sounds/
 
 The engine reads scenes from ``assets/hikarin/<trigger>.json``, where the
 trigger is the character's name (the story's custom name, lowercased). One file
-per character is the whole reason a project can hold several stories: the pack
-is the unit the runtime installs, and the story is the unit it loads.
+per character is the whole reason a project can hold several stories.
 
 Textures resolve from the same namespace first, then the framework's own art,
 then a legacy 2024-era pack under the ``mobtalkerredux:`` namespace.
@@ -29,6 +41,7 @@ import io
 import json
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from .compiler import CompileResult
 
@@ -151,6 +164,101 @@ def build_pack(
     return buffer.getvalue()
 
 
+def build_hikarin(
+    meta: dict,
+    stories: dict[str, tuple[dict, CompileResult]],
+    project_path: Path,
+) -> bytes:
+    """Return the Hikarin bundle: a manifest plus plain files.
+
+    This is the format the project is named after and the one to reach for by
+    default. A directory another program can read without knowing anything about
+    resource packs::
+
+        manifest.json
+        <trigger>.json        compiled script, one per story
+        images/...            as authored
+        sounds/...            as authored
+
+    :func:`build_pack` produces the same content in a resource-pack layout — a
+    ``pack.mcmeta``, an ``assets/<namespace>/`` prefix and a ``textures/``
+    rename. That is a packaging convention for one runtime, not a better shape,
+    so this one keeps the author's folder names and adds only a manifest: which
+        files are scripts, which trigger maps to which story, and where the art
+        lives.
+    """
+    broken = [
+        f"{slug}: {result.errors[0]}"
+        for slug, (_story_meta, result) in stories.items()
+        if result.errors
+    ]
+    if broken:
+        raise ValueError(
+            "Cannot export, the story has compile errors:\n  " + "\n  ".join(broken)
+        )
+    if not stories:
+        raise ValueError("Cannot export: this project has no stories.")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        scripts: list[dict[str, Any]] = []
+        seen: dict[str, str] = {}
+
+        for slug, (story_meta, result) in stories.items():
+            filename = story_filename(story_meta)
+            if filename in seen:
+                raise ValueError(
+                    f'Stories "{seen[filename]}" and "{slug}" both compile to '
+                    f"{filename}.json. Give each story its own character name."
+                )
+            seen[filename] = slug
+
+            zf.writestr(
+                f"{filename}.json",
+                json.dumps(result.actions, indent=2, ensure_ascii=False),
+            )
+            scripts.append(
+                {
+                    "story": slug,
+                    "character": story_meta.get("character") or slug,
+                    "file": f"{filename}.json",
+                    "actions": len(result.actions),
+                    "startLabel": story_meta.get("startLabel") or "start",
+                }
+            )
+
+        manifest = {
+            "format": "hikarin",
+            "version": 1,
+            "packName": meta.get("packName") or "Hikarin Pack",
+            "description": meta.get("description") or "",
+            "namespace": CONTENT_NAMESPACE,
+            "scripts": scripts,
+            "images": "images/",
+            "sounds": "sounds/",
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
+
+        for sub in ("images", "sounds"):
+            root = project_path / sub
+            if not root.is_dir():
+                continue
+            for file in sorted(root.rglob("*")):
+                if not file.is_file():
+                    continue
+                if file.suffix.lower() not in (IMAGE_EXT + SOUND_EXT):
+                    continue
+                rel = file.relative_to(project_path).as_posix()
+                if rel == "images/pack.png":
+                    # The pack icon is a resource-pack concept. In a plain
+                    # bundle it is just another image, and shipping it twice
+                    # (root and images/) is worse than leaving it where it is.
+                    continue
+                zf.write(file, rel)
+
+    return buffer.getvalue()
+
+
 def export_filename(meta: dict) -> str:
     """A safe file name for the zip, e.g. 'Cupa's Story' -> cupa-s-story.zip."""
     raw = (meta.get("packName") or meta.get("slug") or "pack").lower()
@@ -162,7 +270,7 @@ def export_filename(meta: dict) -> str:
 
 # ── extra export formats ────────────────────────────────────────────────────
 
-EXPORT_FORMATS = ("pack", "json", "txt", "md", "bundle")
+EXPORT_FORMATS = ("pack", "hikarin", "json", "txt", "md", "bundle")
 
 
 def _id_to_label(actions):
@@ -357,4 +465,6 @@ def export_filename_for(meta, fmt: str) -> str:
         return f"{base_name}.md"
     if fmt == "bundle":
         return f"{base_name}.hikarin.zip"
+    if fmt == "hikarin":
+        return f"{base_name}-hikarin.zip"
     return export_filename(meta)

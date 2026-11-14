@@ -28,8 +28,9 @@ from hikarin import assets as asset_store
 from hikarin import blocks as block_defs
 from hikarin import projects as project_store
 from hikarin import variables as variable_store
-from hikarin.compiler import compile_project
+from hikarin.compiler import CompileResult, compile_project
 from hikarin.exporter import (
+    build_hikarin,
     build_json,
     build_markdown,
     build_pack,
@@ -506,10 +507,10 @@ def serve_asset(slug: str, path: str):
 # editor's Export button does when you are looking at one story.
 
 
-def _compiled_stories(slug: str) -> dict[str, tuple[dict, object]]:
+def _compiled_stories(slug: str) -> dict[str, tuple[dict, CompileResult]]:
     """Every story in the project, compiled. Raises 400 if any of them is broken."""
     project = _project_or_404(project_store.load_project, slug)
-    out: dict[str, tuple[dict, object]] = {}
+    out: dict[str, tuple[dict, CompileResult]] = {}
     errors: list[str] = []
     for summary in project["stories"]:
         loaded = project_store.load_story(slug, summary["slug"])
@@ -551,6 +552,12 @@ def export_project(slug: str, format: str = "pack", pack_format: int | None = No
             )
             media = "application/zip"
             filename = export_filename_for(project["meta"], "pack")
+
+        elif fmt == "hikarin":
+            stories = _compiled_stories(slug)
+            payload = build_hikarin(project["meta"], stories, project_store.project_dir(slug))
+            media = "application/zip"
+            filename = export_filename_for(project["meta"], "hikarin")
 
         elif fmt == "bundle":
             # The bundle carries authoring blocks, not compiled actions.

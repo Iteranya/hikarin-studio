@@ -15,7 +15,13 @@ import pytest
 
 from hikarin import projects as store
 from hikarin.compiler import compile_project
-from hikarin.exporter import DEFAULT_PACK_FORMAT, build_pack, export_filename, story_filename
+from hikarin.exporter import (
+    DEFAULT_PACK_FORMAT,
+    build_hikarin,
+    build_pack,
+    export_filename,
+    story_filename,
+)
 
 
 @pytest.fixture
@@ -308,6 +314,64 @@ def test_pack_format_is_an_export_option_not_a_project_field(pack, temp_root):
 
     # and the project on disk is untouched by either export
     assert "packFormat" not in store.load_project(pack)["meta"]
+
+
+# ── plain (runtime-agnostic) export ─────────────────────────────────────────
+
+
+def test_hikarin_bundle_has_no_resource_pack_layout(pack, temp_root):
+    """The whole point: another runtime should not need to know about packs."""
+    root = temp_root / pack
+    (root / "images" / "asset").mkdir(parents=True, exist_ok=True)
+    (root / "images" / "asset" / "end.png").write_bytes(b"BG")
+    (root / "images" / "pack.png").write_bytes(b"ICON")
+    (root / "sounds" / "music").mkdir(parents=True, exist_ok=True)
+    (root / "sounds" / "music" / "haggstrom.ogg").write_bytes(b"OGG")
+
+    project = store.load_project(pack)
+    stories = {}
+    for summary in project["stories"]:
+        loaded = store.load_story(pack, summary["slug"])
+        stories[summary["slug"]] = (loaded["meta"], store.compile_slug(pack, summary["slug"]))
+
+    payload = build_hikarin(project["meta"], stories, root)
+
+    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+        names = set(zf.namelist())
+
+        # scripts at the root, named by trigger — no assets/hikarin/ prefix
+        assert "cupa.json" in names
+        assert "reimu.json" in names
+        assert not any(n.startswith("assets/") for n in names), names
+
+        # none of the resource-pack machinery
+        assert "pack.mcmeta" not in names
+        assert "pack.png" not in names
+
+        # art keeps the folder names the author gave it
+        assert "images/asset/end.png" in names
+        assert "sounds/music/haggstrom.ogg" in names
+        assert "assets/hikarin/textures/asset/end.png" not in names
+
+        manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["format"] == "hikarin"
+        assert [s["story"] for s in manifest["scripts"]] == ["cupa", "reimu"]
+        assert all(s["file"] == f'{s["character"]}.json' for s in manifest["scripts"])
+
+
+def test_hikarin_export_rejects_a_duplicate_trigger(pack):
+    """Two stories claiming one file name would overwrite in the zip."""
+    meta = store.load_project(pack)["meta"]
+    files = {"main.story": [{"kind": "label", "data": {"name": "start"}}]}
+    store.save_story(pack, "cupa", {"character": "same"}, files)
+    store.save_story(pack, "reimu", {"character": "same"}, files)
+
+    stories = {
+        "cupa": ({"character": "same"}, compile_project({"character": "same"}, files)),
+        "reimu": ({"character": "same"}, compile_project({"character": "same"}, files)),
+    }
+    with pytest.raises(ValueError):
+        build_hikarin(meta, stories, store.project_dir(pack))
 
 
 def test_export_refuses_empty_project(temp_root):
