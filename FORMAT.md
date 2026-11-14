@@ -1,12 +1,12 @@
 # Hikarin script format — ground truth
 
 Everything the studio writes must compile to exactly this. It is what the
-Minecraft runtime (`TLM: Visual Novel Framework`) reads.
+runtime (`TLM: Visual Novel Framework`) reads.
 
 ## Shipped format
 
 One flat JSON array per character, at `assets/hikarin/<trigger>.json`.
-The trigger is the file name: `cupa.json` is read by a maid named `cupa`.
+The trigger is the file name: `cupa.json` is read by the character `cupa`.
 
 ```json
 [
@@ -37,7 +37,7 @@ Ids are sequential from 0 and unique. The engine looks actions up by id.
 | `choice` | `choice[]` | each `{label, display}` |
 | `night_choice` | `choice[]` | only shown at night |
 | `transition` | `action: "jump"`, `label` | optional `file` for cross-scene |
-| `command` | `command` | runs a Minecraft command |
+| `command` | `command` | runs a console command |
 | `play_level` | `level` | **PvZ Fusion extension:** leave the VN, play this custom level, then resume. Optional `on_complete` / `on_fail` labels; empty = fall through / retry |
 | `give_item` | `item`, `amount` | |
 | `take_item` | `item`, `amount` | |
@@ -50,7 +50,7 @@ Ids are sequential from 0 and unique. The engine looks actions up by id.
 
 ## `next` is a real save
 
-`next` writes a checkpoint label. The next time this maid's scene opens, the
+`next` writes a checkpoint label. The next time this story's scene opens, the
 engine jumps straight to that label instead of starting from the top. This
 matches the 2024 engine, which stored `checkpoint` in `localVariables`, saved
 them per entity, and jumped back to it in `loadProgress()`.
@@ -59,7 +59,7 @@ A checkpoint pointing at a label that no longer exists logs a warning, clears
 itself, and starts from the top — rather than silently pretending to resume.
 
 `end` (`finish_dialogue`) writes `WORLD` scope to disk. `MAID` and `SCENE`
-values are in the maid's NBT and save with the entity, so they do not depend on
+values are in the story's NBT and save with the entity, so they do not depend on
 `end` firing.
 
 ## Scopes
@@ -71,16 +71,26 @@ Bare names resolve to `SCENE`. Explicit prefixes select other scopes.
 | `SCENE` | `@scene.` | **per maid, survives scene close** (NBT) | yes |
 | `MAID` | `@maid.` | per maid, survives everything else (NBT) | yes |
 | `WORLD` | `@world.` | forever, profile JSON; survives new worlds | yes |
-| `PLAYER` | `@player.` | injected fresh per scene, **read-only** | no |
+| `PLAYER` | `@player.` | injected fresh per scene, **read-only** | no
+
+**The studio exposes two of these, not four.** An author chooses between *local*
+and *global*, because those are the only two that change how you write: a local is
+one story's own business, a global is shared and has to be declared so every story
+offers the same spelling. `MAID` and `SCENE` differ in which NBT compound a name
+lands in — a distinction the engine makes and an author should not have to. Both
+compile to bare names from the studio; write `MAID` explicitly by hand if you need
+it.
+
+The studio's words are `LOCAL` and `GLOBAL`. `hikarin.blocks` translates on the
+way out: `GLOBAL` becomes `"scope": "WORLD"`, and `LOCAL` emits no scope key at
+all, because a bare name is how the engine spells local. The translation is one
+table in one module — do not rename the output, the mod reads the literal string.
 
 **`SCENE` is not ephemeral.** Despite the name, bare-name variables are stored
-in the maid's NBT under a `local` compound and outlive the conversation. This
+in the story's NBT under a `local` compound and outlive the conversation. This
 matches the 2024 engine, where `localVariables` were written to disk per entity
 by `saveProgress()` and restored by `loadProgress()`. A legacy script that
 increments a bare variable across conversations still accumulates.
-
-Use `SCENE` for per-maid working values, `MAID` for explicitly per-maid flags,
-`WORLD` for player-wide progress, and `PLAYER` for read-only world facts.
 
 ### The `local` and `@maid.` keyspaces are separate
 
@@ -172,7 +182,7 @@ if re.search(r"[A-Z\s.,!?#@$*]", sprite):
                      "white space, or uppercase letters.")
 ```
 
-Minecraft texture paths are lowercase-only. A capital or a space does not fail
+Texture paths are lowercase-only. A capital or a space does not fail
 loudly — it silently renders nothing, which reads as "the artist forgot a
 file". The compiler rejects it instead.
 
@@ -199,31 +209,47 @@ Unlock is a flag. Progress is a conditional. There is no separate gating system.
 
 ## Source format (what the studio edits)
 
-A project is a folder of `.story` files that compile into one flat JSON.
+A project is a pack. A story is one character's script inside it. A story's `.story`
+files compile into one flat JSON.
 
 ```
-cupa/
+<project>/
   project.json
-  main.story
-  night.story
-  idle.story
-  items/endrod.story
+  stories/
+    cupa/
+      story.json
+      main.story
+      night.story
+      idle.story
+      items/endrod.story
 ```
 
-`project.json`:
+`project.json` is the pack manifest:
+
+```json
+{
+  "packName": "Cupa's Story",
+  "description": "Made with Hikarin Studio"
+}
+```
+
+`stories/<story>/story.json` is the script manifest. `character` is the trigger
+— it becomes the file name the runtime loads (`assets/hikarin/<character>.json`)
+and must be unique inside the pack:
 
 ```json
 {
   "character": "cupa",
-  "packName": "Cupa's Story",
-  "packFormat": 15,
-  "displayName": "Cupa",
+  "description": "",
   "files": ["main.story", "night.story", "idle.story", "items/endrod.story"],
   "startLabel": "start"
 }
 ```
 
 Each `.story` file holds an array of the same action objects, but **without
-`id`**. The compiler concatenates the files (the one containing `startLabel`
-first), assigns sequential ids, and validates that every `label` reference
-resolves.
+`id`**. The compiler concatenates that story's files (the one containing
+`startLabel` first), assigns sequential ids, and validates that every `label`
+reference resolves.
+
+The resource pack format version is not stored here. It is an export option —
+pass `pack_format` when exporting, defaulting to 15.

@@ -4,7 +4,7 @@ Visual editor for Hikarin visual novel scripts — the content pipeline for
 **TLM: Visual Novel Framework** (a Touhou Little Maid fold).
 
 Write a story as a stack of blocks across as many `.story` tabs as you want.
-Validate it, and export a resource pack Minecraft will load.
+Validate it, and export a resource pack the runtime will load.
 
 ## Run
 
@@ -13,7 +13,9 @@ uv sync
 uv run serve.py
 ```
 
-Open **http://127.0.0.1:8411** (override with `HIKARIN_PORT`).
+Open **http://127.0.0.1:8411** (override with `HIKARIN_PORT`). That lands on the
+project manager — with no projects yet it says so and offers **New project**,
+rather than dropping you into an empty editor.
 
 `serve.py` runs uvicorn without the reloader: a single-process local tool gains
 nothing from it, and the reloader's module cache can keep serving stale routes
@@ -24,29 +26,72 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ## The model
 
-A project is a folder under `projects/`. The folder *is* the project — `git init`
-it if you want version control.
+Three levels, and the difference matters:
 
 ```
-projects/cupa/
-  project.json     character, pack name, file order, start label
-  main.story       the spine: night gate, achievement gate, idle fallback
-  night.story
-  idle.story       forty idle lines get their own tab
-  items/
-    endrod.story
-  assets/
-    cupa/happy.png         sprites, grouped by character folder
-    room.png               backgrounds (flat)
-    click.ogg
+projects/<project>/          a project = one resource pack
+  project.json               pack name, pack format, description
+  stories/
+    <story>/                 a story = one character's script
+      story.json             character (the trigger), start label, file order
+      main.story             the spine: night gate, achievement gate, idle fallback
+      night.story
+      idle.story             forty idle lines get their own tab
+  images/                    shared by every story in the pack
+    pack.png                 the resource pack icon
+    characters/cupa/default/happy.png
+    asset/room.png
+  sounds/
+    music/haggstrom.ogg
+    sound/click.ogg
 ```
 
-**Labels are global across files.** A Jump in `main.story` can target a label
-defined in `night.story`. The compiler validates every reference and suggests a
-correction on a typo (`go_nihgt` → `go_to_night`).
+A **project** is what the runtime installs. A **story** is one character inside it. A
+project with one story and a project with six are the same shape — adding a story
+must not mean restructuring anything. Each story compiles to its own
+`assets/hikarin/<character>.json`, which is exactly what the engine reads.
+
+**Art is shared.** `images/` and `sounds/` belong to the project, so two stories
+in one pack use the same sprites without duplicating files.
+
+Labels are scoped to a story. A Jump in `main.story` can target a label
+defined in `night.story`; it can never reach into another story's script. The
+compiler validates every reference and suggests a correction on a typo
+(`go_nihgt` → `go_to_night`).
+
+**Two scopes, and only one of them is declared.**
+
+| scope | what it is | how you name it |
+|---|---|---|
+| **Local** (default) | working state inside one story — a counter, a scratch flag | typed straight into the block |
+| **Global** | shared by every story in the pack | picked from the manager's **Variables** tab |
+
+A local compiles to a bare name with no scope key. A global compiles to
+`"scope": "WORLD"` — the studio says GLOBAL and `hikarin.blocks` translates, so the
+engine gets the string it reads. Either way a global is declared once in the
+manager, which is what stops it ending up spelled three ways across four stories
+(the failure a conditional reading `affection` while another block writes
+`affection.cupa` produces, silently, because the engine treats them as different
+variables).
+
+Declaring is a convenience for the editor, not state the engine reads: a story
+that uses an undeclared global still compiles, and removing a declaration never
+touches the blocks that reference it.
 
 **Tab order does not matter.** The file containing `startLabel` is compiled
 first, so you can reorganise tabs freely without changing execution order.
+
+## Projects and stories
+
+`http://127.0.0.1:8411/` **is** the launcher — it redirects to `/manager`, which
+is the front door. It lists projects, shows the stories inside one, and is the
+only place projects and stories are created, renamed, duplicated or deleted.
+Opening a story hands off to the editor.
+
+The editor lives at `/editor` and edits exactly one story —
+`/editor?project=<project>&story=<story>` — so a reload returns to the same place
+and a story can be linked to. Opened with no story it says so and links back to
+the manager, rather than showing a blank page.
 
 ## The loop
 
@@ -81,7 +126,7 @@ or night in the Test dropdown and the variable fields disappear, because there
 is nothing to name.
 
 **Scenes do not silently lose their variables.** Despite the name, `SCENE`
-(bare names like `visits`) persists in the maid's NBT and survives the
+(bare names like `visits`) persists in the story's NBT and survives the
 conversation closing, matching the 2024 engine where `localVariables` were
 saved per entity. A script that increments a bare counter across conversations
 keeps counting.
@@ -111,14 +156,22 @@ labels that field "Otherwise, jump to" for this reason — an earlier label of
 ## Architecture
 
 ```
-main.py             FastAPI: serves static/, project CRUD, compile, export
+main.py             FastAPI: serves static/, project+story CRUD, compile, export
 hikarin/blocks.py   block -> engine action mapping (the vocabulary)
-hikarin/compiler.py many .story files -> one flat JSON
-hikarin/projects.py folder storage, asset inventory
-hikarin/exporter.py resource pack zip builder
+hikarin/compiler.py many .story files -> one flat JSON (per story)
+hikarin/projects.py folder storage: projects contain stories
+hikarin/exporter.py resource pack zip builder (one JSON per story)
+static/manager.*    the launcher: projects, stories, assets, and variables
+static/assets.js    the asset window (mounted by whichever page needs it)
+hikarin/variables.py  the shared variable registry
 static/             the editor (vanilla JS, no build step)
 tests/              pytest
 ```
+
+`hikarin/compiler.py` never learned about projects or stories, and should not:
+it takes a meta dict and a `{file: blocks}` dict, which is exactly one story.
+That is why the three-level model cost so little — the compiler already had the
+right shape for the innermost level.
 
 **Why a server:** compiling and zipping are filesystem work. Doing that in a
 browser means either a Chromium-only file API or download-and-manually-unzip.
@@ -129,7 +182,7 @@ runs headlessly for CI.
 
 `FORMAT.md` is ground truth on the shipped JSON: action vocabulary, scopes,
 conditions, injected variables, and the spine pattern both the editor and the
-Minecraft mod are built against.
+runtime are built against.
 
 `NOTES.md` records the wrinkles: conditionals store action ids while authors
 type labels; and `label` means *jump target* in a choice but *speaker* in
@@ -138,35 +191,77 @@ dialogue.
 
 ## Project management
 
-Use the **Projects** controls in the top bar (or the API):
+The **manager** (`/manager`) is where structure changes. The editor deliberately
+cannot create, rename or delete anything — structure edits belong somewhere you
+can see the whole pack, not in a dropdown in the corner of a text editor.
 
-- **New** — create a project
-- **Open** — pick any project from the dropdown
-- **Duplicate** — copy a project to a new slug
-- **Rename** — move a project folder to a new slug
-- **Delete** — remove a project folder
-- **Import** — upload a `.hikarin.zip` project bundle (from the project export)
+Per project: **assets** (characters, images, audio), **global variables**, rename
+(title, description), duplicate, delete, export the pack.
 
-API equivalents:
+Assets belong to the project, not to a story — a pack's `images/` and `sounds/`
+are shared by every story in it. So they are managed here, in the manager, and
+not from inside a story. The editor still reads them (every sprite and background
+picker is built from the project's inventory), it just does not own them.
+
+Per story: create, open, rename, duplicate, delete. Deleting a story leaves the
+shared `images/` and `sounds/` alone, because the art belongs to the pack.
+
+API:
 
 ```
-POST /api/projects/{slug}/duplicate  {"new_slug": "..."}
-POST /api/projects/{slug}/rename     {"new_slug": "..."}
-POST /api/projects/import-zip?slug=...   (body: .hikarin.zip)
+GET    /api/projects                              list, with story counts
+POST   /api/projects                              create a pack
+GET    /api/projects/{slug}                       pack + its stories
+PUT    /api/projects/{slug}                       pack metadata
 DELETE /api/projects/{slug}
+POST   /api/projects/{slug}/duplicate             {"new_slug": "..."}
+POST   /api/projects/{slug}/rename                {"new_slug": "..."}
+POST   /api/projects/import-zip?slug=...          (body: .hikarin.zip)
+
+GET    /api/projects/{slug}/variables             declared global variables
+PUT    /api/projects/{slug}/variables             replace them (validated first)
+
+GET    /api/projects/{slug}/stories               list stories
+POST   /api/projects/{slug}/stories               {"slug": "...", "meta": {...}}
+GET    /api/projects/{slug}/stories/{story}       story + blocks + assets
+PUT    /api/projects/{slug}/stories/{story}       save blocks
+DELETE /api/projects/{slug}/stories/{story}
+POST   /api/projects/{slug}/stories/{story}/duplicate
+POST   /api/projects/{slug}/stories/{story}/rename
 ```
 
 ## Export formats
 
 `GET /api/projects/{slug}/export?format=...`
 
+The pack export is project-level: it compiles every story and writes one JSON
+per story.
+
+```
+GET /api/projects/{slug}/export?format=pack     # default
+GET /api/projects/{slug}/export?format=bundle
+```
+
 | format | output |
 |---|---|
-| `pack` | Minecraft resource pack `.zip` (default) |
-| `json` | Compiled story JSON (`<character>.json`) |
-| `txt` | Plain-text script |
-| `md` | Markdown script, labels as `##` headings |
-| `bundle` | Project bundle `.hikarin.zip` for import/backup |
+| `pack` | Resource pack `.zip` — every story, one JSON per story |
+| `bundle` | Project bundle `.hikarin.zip`, re-importable, carries blocks not actions |
+
+The resource pack version is an export option, not a property of the project —
+the same scripts can be built for several runtime versions. Pass it on the
+export call; it defaults to 15 (1.20.1).
+
+```
+GET /api/projects/{slug}/export?format=pack&pack_format=15
+```
+
+A single story exports on its own, which is what the editor's Export button does:
+
+```
+GET /api/projects/{slug}/stories/{story}/export?format=json   # default
+GET /api/projects/{slug}/stories/{story}/export?format=txt
+GET /api/projects/{slug}/stories/{story}/export?format=md
+```
 
 ## Test
 

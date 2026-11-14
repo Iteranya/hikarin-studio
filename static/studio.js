@@ -1,14 +1,20 @@
 /* Hikarin Studio — editor logic.
  *
- * State lives in `state.projects[slug]`. The server owns the files; this module
- * only needs to render blocks and POST changes back.
+ * The editor edits ONE story. The project it belongs to is context, not
+ * something you switch here: that is the manager's job (`manager.html`), and
+ * mixing the two is how "project" ends up meaning three different things in one
+ * UI.
+ *
+ * `state.project` is the story document the server returned — its `slug` is the
+ * story slug, and `projectSlug` is the pack it lives in. Every autosave, compile
+ * and export URL is built from those two.
  *
  * The editor never assigns action ids — the compiler does. Blocks are
  * {kind, data} and every reference is a label name, so a writer can reorder
  * tabs and blocks freely without breaking anything.
  */
 
-import { initAssets, openAssets, deleteAssetPath } from './assets.js';
+import { initAssets, deleteAssetPath } from './assets.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -16,7 +22,7 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   meta: null,              // block definitions from /api/meta
-  project: null,           // { slug, meta, files, assets }
+  project: null,           // the open story: { slug, projectSlug, meta, files, assets }
   activeFile: null,
   selected: null,          // { file, index }
   dirty: false,
@@ -52,13 +58,85 @@ const autosave = {
 async function boot() {
   state.meta = await fetch('/api/meta').then((r) => r.json());
   renderPalette();
-  // The asset window reads and writes media folders directly, so it needs the
-  // live state object and a way to tell the editor that a picker's options
-  // changed underneath it.
-  initAssets({ state, onChange: onAssetsChanged });
-  await refreshProjectList();
+  // The asset window reads and writes the PROJECT's media folders, because a
+  // pack's art is shared by every story in it. It is mounted against whatever
+  // story is open, but keyed by that story's project — so the pickers can
+  // refresh when a sprite lands, without the window belonging to the editor.
+  initAssets({
+    projectSlug: () => state.project?.projectSlug ?? '',
+    assets: () => state.project?.assets ?? null,
+    setAssets: (assets) => {
+      if (!state.project) return;
+      state.project.assets = assets;
+      onAssetsChanged();
+    },
+    title: () => state.project?.meta?.character || state.project?.projectSlug || '',
+  });
+  await openFromLocation();
   wireChrome();
   wireMobileNav();
+}
+
+/**
+ * Work out which story to open.
+ *
+ * The manager links here with ?project= and ?story=, and a reload should return
+ * to the same place, so the URL is the source of truth.
+ *
+ * Landing here with no parameters, or with parameters that no longer resolve, is
+ * not an error — it means there is nothing open. The editor says so and offers
+ * the way out, rather than sitting on a blank page with a red status bar.
+ */
+async function openFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  const project = params.get('project');
+  const story = params.get('story');
+
+  if (project && story) {
+    const opened = await openStory(project, story);
+    if (opened) return;
+    // The story was renamed or deleted under us. Fall through to the empty
+    // state instead of leaving the last story's blocks on screen.
+  }
+
+  showNothingOpen();
+}
+
+/** No story is open. Explain why, and point at the manager. */
+function showNothingOpen() {
+  state.project = null;
+  state.activeFile = null;
+  state.selected = null;
+  state.dirty = false;
+
+  $('project-character').textContent = '—';
+  const storySelect = $('story-select');
+  if (storySelect) {
+    storySelect.innerHTML = '<option value="">no story open</option>';
+    storySelect.value = '';
+    storySelect.disabled = true;
+  }
+  for (const id of ['btn-play', 'btn-export', 'btn-compile']) {
+    $(id).disabled = true;
+  }
+
+  const tabs = $('tabs');
+  if (tabs) tabs.innerHTML = '';
+  const list = $('blocklist');
+  if (list) list.innerHTML = '';
+  renderOutline();
+  renderInspector();
+  updateCounts();
+
+  const empty = $('empty-state');
+  if (!empty) return;
+  empty.hidden = false;
+  empty.innerHTML =
+    '<p class="empty-title">No story open</p>' +
+    '<p class="empty-hint">Projects and stories live in the manager. ' +
+    '<button class="btn tiny" id="empty-open-manager">Open the manager</button></p>';
+  const btn = $('empty-open-manager');
+  if (btn) btn.onclick = openManager;
 }
 
 // ── mobile pane switching ───────────────────────────────────────────────────
@@ -101,63 +179,56 @@ function onAssetsChanged() {
   renderBlocks();
 }
 
-async function refreshProjectList() {
-  const projects = await fetch('/api/projects').then((r) => r.json());
-  const sel = document.getElementById('project-select');
-  if (sel) {
-    const current = state.project?.slug;
-    sel.innerHTML = '';
-    for (const p of projects) {
-      const opt = document.createElement('option');
-      opt.value = p.slug;
-      opt.textContent = (p.packName || p.slug) + ' (' + p.slug + ')';
-      if (p.slug === current) opt.selected = true;
-      sel.appendChild(opt);
-    }
-  }
-  if (projects.length === 0) {
-    setStatus('compile', 'no projects yet — press New', 'warn');
-    return;
-  }
-  // Auto-open the most recently modified project so a reload resumes work.
-  const slug = state.project?.slug ?? projects[projects.length - 1].slug;
-  await openProject(slug);
-}
-
-async function openProject(slug) {
-  // Whatever is on screen has to be on disk before the next project's files are
-  // read, or an autosave can land on the project you just left.
+/**
+ * Open one story, and put it in the URL.
+ *
+ * Whatever is on screen has to be on disk before the next story's files are
+ * read, or an autosave can land on the story you just left.
+ */
+async function openStory(projectSlug, storySlug) {
   if (state.project) await flushAutosave();
 
-  const data = await fetch(`/api/projects/${slug}`).then((r) => r.json());
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectSlug)}/stories/${encodeURIComponent(storySlug)}`
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    setStatus('compile', err.detail || 'Could not open that story', 'error');
+    return false;
+  }
+
+  const data = await res.json();
   state.project = data;
-  const sel = document.getElementById('project-select'); if (sel) sel.value = slug;
   state.activeFile = data.meta.files[0] ?? null;
   state.selected = null;
   state.dirty = false;
 
-  $('project-name').textContent = data.meta.packName || slug;
-  $('project-character').textContent = data.meta.character || '—';
+  const url = new URL(window.location.href);
+  url.searchParams.set('project', projectSlug);
+  url.searchParams.set('story', storySlug);
+  window.history.replaceState({}, '', url);
+
+  $('project-character').textContent = projectSlug;
+  $('project-character').title = `Project: ${projectSlug}`;
+  renderStorySwitch();
   $('btn-play').disabled = false;
   $('btn-export').disabled = false;
   $('btn-compile').disabled = false;
-  $('btn-assets').disabled = false;
 
   // #empty-state lives *inside* #blocklist in index.html, and renderBlocks()
-  // wipes that list on every render — so from the second openProject() onwards
-  // the element is gone. Touching it unguarded threw a TypeError right here,
+  // wipes that list on every render — so from the second open onwards the
+  // element is gone. Touching it unguarded threw a TypeError right here,
   // halfway through the load, which aborted renderTabs/renderBlocks and left
-  // the previous project's blocks on screen. That is the whole "switching
-  // projects does nothing" bug: the fetch succeeded, the render never ran.
+  // the previous story's blocks on screen.
   const emptyState = $('empty-state');
   if (emptyState) emptyState.hidden = true;
-
 
   renderTabs();
   renderBlocks();
   renderOutline();
   renderInspector();
   updateCounts();
+  return true;
 }
 
 // ── palette ─────────────────────────────────────────────────────────────────
@@ -237,6 +308,51 @@ function renderPalette() {
     }
     body.appendChild(wrap);
   }
+}
+
+// ── story switcher ──────────────────────────────────────────────────────────
+//
+// The top bar answers "which story am I editing?". A project is a pack holding
+// several stories, and switching between them should not cost a trip to the
+// manager and back.
+//
+// The list comes from the server with the story payload (`siblings`), so
+// opening a story already knows its neighbours and this renders with no extra
+// request. A new story is created through the manager, which owns structure.
+
+function renderStorySwitch() {
+  const select = $('story-select');
+  if (!select) return;
+
+  const current = state.project?.slug;
+  const projectSlug = state.project?.projectSlug;
+
+  if (!current || !projectSlug) {
+    select.innerHTML = '<option value="">no story open</option>';
+    select.value = '';
+    select.disabled = true;
+    return;
+  }
+
+  const stories = [
+    { slug: current, character: state.project.meta?.character || current },
+    ...(state.project.siblings ?? []),
+  ].sort((a, b) => a.slug.localeCompare(b.slug));
+
+  select.innerHTML = '';
+  for (const s of stories) {
+    const opt = document.createElement('option');
+    opt.value = s.slug;
+    // Show the character when it differs from the folder, because that is the
+    // name the story exports as — the thing an author actually recognises.
+    opt.textContent = s.character && s.character !== s.slug
+      ? `${s.character}  ·  ${s.slug}`
+      : s.slug;
+    opt.selected = s.slug === current;
+    select.appendChild(opt);
+  }
+  select.disabled = false;
+  select.title = `Switch story in ${projectSlug}`;
 }
 
 // ── tabs ────────────────────────────────────────────────────────────────────
@@ -465,9 +581,9 @@ function defaultData(kind) {
     case 'hide':
       return { mode: 'character' };
     case 'if':
-      return { scope: '', var: '', condition: 'equal', value: '', _target: '' };
+      return { scope: 'LOCAL', var: '', condition: 'equal', value: '', _target: '' };
     case 'setVar':
-      return { scope: '', var: '', operation: 'set', value: '' };
+      return { scope: 'LOCAL', var: '', operation: 'set', value: '' };
     case 'giveItem':
     case 'takeItem':
       return { item: '', amount: 1 };
@@ -600,6 +716,122 @@ function textField(key, label, placeholder = '', hint = '') {
   return { key, label, render: () => input(null, key, label, placeholder, hint) };
 }
 
+/**
+ * The variable field: pick a declared variable, or type a new one.
+ *
+ * An author declares `affection` once in the manager and every block picks it.
+ * The escape hatch matters: a writer mid-scene invents `seen_door_3`, and a
+ * picker that forbade typing would push them into the manager mid-sentence. So
+ * this is an input with a datalist — the registry suggests, the keyboard still
+ * works, and the block's own scope is left alone because a name can legitimately
+ * be read under more than one scope.
+ *
+ * The scope follows the variable's default only when the field is empty. Once a
+ * scope is set — by a previous pick or by hand — it wins, because changing it
+ * under an author who just chose it would be a silent edit.
+ */
+function variableField(key = 'var') {
+  const declared = state.project?.variables ?? [];
+  const data = current().data;
+  // LOCAL is this story's own state; GLOBAL is shared by the pack. Globals are
+  // picked from the registry rather than typed, because a global has to match
+  // across every story — that is the only reason the registry exists.
+  const isGlobal = data.scope === 'GLOBAL';
+
+  if (isGlobal) return globalVariableField(key, declared);
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:4px;align-items:center';
+
+  const input_ = document.createElement('input');
+  input_.type = 'text';
+  input_.value = data[key] ?? '';
+  input_.placeholder = 'tick_count';
+  input_.style.cssText = 'flex:1 1 auto;min-width:0';
+  input_.className = 'input';
+  input_.oninput = () => {
+    data[key] = input_.value;
+    commit();
+  };
+
+  row.appendChild(input_);
+  wrap.appendChild(row);
+
+  // Deliberately no suggestions here. A local is this story's own scratch name;
+  // offering the globals would blur the one distinction the two scopes exist to
+  // make.
+  const hint = declared.length
+    ? `Local to this story. ${declared.length} global${declared.length === 1 ? '' : 's'} declared — switch Scope to Global to pick one.`
+    : 'Local to this story: it lives and dies with this script.';
+
+  return wrapField('Variable', wrap, hint);
+}
+
+/**
+ * A global variable: picked from the project's declared list.
+ *
+ * A `<select>` rather than a datalist, because a global that is not declared is
+ * the mistake this whole registry exists to prevent. If the block already holds
+ * an undeclared name (imported work, or a rename that outran the registry) it is
+ * shown as a selectable "(undeclared)" row instead of being silently dropped.
+ */
+function globalVariableField(key, declared) {
+  // `value`, not `current`: naming this `current` shadows the current() helper,
+  // and calling current() on the line above a `const current` is a temporal dead
+  // zone error. The field rendered nothing at all and the inspector looked blank.
+  const data = current().data;
+  const value = data[key] ?? '';
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+
+  const select = document.createElement('select');
+  select.className = 'select';
+  select.style.cssText = 'width:100%';
+
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = declared.length ? '— pick a global —' : '— none declared —';
+  select.appendChild(blank);
+
+  for (const v of declared) {
+    const opt = document.createElement('option');
+    opt.value = v.name;
+    opt.textContent = v.description ? `${v.name} — ${v.description}` : v.name;
+    select.appendChild(opt);
+  }
+
+  // Keep an undeclared value visible rather than discarding it.
+  const isDeclared = declared.some((v) => v.name === value);
+  if (value && !isDeclared) {
+    const stray = document.createElement('option');
+    stray.value = value;
+    stray.textContent = `${value} (not declared)`;
+    select.appendChild(stray);
+  }
+
+  select.value = value;
+  select.onchange = () => {
+    data[key] = select.value;
+    commit();
+  };
+
+  wrap.appendChild(select);
+
+  let hint;
+  if (!declared.length) {
+    hint = 'No globals declared yet. Add them in the manager’s Variables tab, then pick one here.';
+  } else if (value && !isDeclared) {
+    hint = 'This name is not in the project’s declared globals — it will still compile, but other stories cannot offer it.';
+  } else {
+    hint = 'Shared by every story in this pack. Declared in the manager.';
+  }
+
+  return wrapField('Variable', wrap, hint);
+}
+
 function fieldsFor(block) {
   const d = block.data;
   const all = [];
@@ -705,8 +937,8 @@ function fieldsFor(block) {
       const spec = state.meta.conditions[d.condition] || { needs_var: true, needs_value: true };
 
       if (spec.needs_var !== false) {
-        all.push({ key: 'scope', label: 'Save as', render: () => selectEl(d, 'scope', state.meta.scopes) });
-        all.push(text('var', 'Variable', 'affection', 'Anything you or the engine sets: affection, seen.night_01, health, advancement.minecraft:nether'));
+        all.push({ key: 'scope', label: 'Scope', render: () => selectEl(d, 'scope', state.meta.scopes, 'Scope') });
+        all.push({ key: 'var', label: 'Variable', render: () => variableField('var') });
       }
       if (spec.needs_value !== false) {
         all.push(text('value', 'Value', 'true / 192 / Cupa', 'Numbers and true/false become real values.'));
@@ -732,7 +964,7 @@ function fieldsFor(block) {
           el.className = 'field-hint';
           el.style.cssText = 'margin:-4px 0 12px;line-height:1.5';
           el.innerHTML =
-            'Moves the story\'s <b>cursor</b> to this label and saves it with the maid. ' +
+            'Moves the story\'s <b>cursor</b> to this label and saves it with the character. ' +
             'The next time she is talked to, the scene resumes there.<br><br>' +
             '<b>Put this only on paths that succeeded.</b> A refusal path (wrong time of day, ' +
             'not enough affection) must end without touching the cursor, so it can wait ' +
@@ -743,8 +975,8 @@ function fieldsFor(block) {
       break;
 
     case 'setVar':
-      all.push({ key: 'scope', label: 'Save as', render: () => selectEl(d, 'scope', state.meta.scopes) });
-      all.push(text('var', 'Variable', 'affection.cupa'));
+      all.push({ key: 'scope', label: 'Scope', render: () => selectEl(d, 'scope', state.meta.scopes, 'Scope') });
+      all.push({ key: 'var', label: 'Variable', render: () => variableField('var') });
       all.push({
         key: 'operation', label: 'Change',
         render: () => selectEl(d, 'operation', [
@@ -1640,9 +1872,20 @@ function deleteBlock() {
   updateCounts();
 }
 
+/** The story switcher's unsaved marker, driven from one place. */
+function markStoryClean() {
+  const dot = $('story-dirty');
+  if (dot) dot.hidden = true;
+  const select = $('story-select');
+  if (select) select.classList.remove('dirty');
+}
+
 function markDirty() {
   state.dirty = true;
-  $('project-name').classList.add('dirty');
+  const dot = $('story-dirty');
+  if (dot) dot.hidden = false;
+  const select = $('story-select');
+  if (select) select.classList.add('dirty');
   renderTabs();
   scheduleAutosave();
 }
@@ -1686,19 +1929,38 @@ function setStatus(which, text, level = '') {
 // ── chrome ──────────────────────────────────────────────────────────────────
 
 function wireChrome() {
-  $('btn-new').onclick = newProject;
-  $('btn-assets').onclick = () => openAssets();
+  $('btn-manager').onclick = openManager;
+
+  // Esc leaves the editor. The tooltip promises it, so it has to exist — and
+  // leaving a story is the one thing you want a keyboard shortcut for.
+  //
+  // Not while typing: Esc in a text field is how you abandon an edit, and
+  // yanking the whole page away would be worse than no shortcut. Same for any
+  // open dialog — those own Esc themselves.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (document.querySelector('.modal-backdrop:not([hidden])')) return;
+    openManager();
+  });
+
   $('btn-compile').onclick = validate;
-  $('btn-export').onclick = exportPack;
+  $('btn-export').onclick = exportStory;
   $('btn-play').onclick = play;
   $('btn-save').onclick = () => save();
-  $('btn-duplicate').onclick = duplicateProject;
-  $('btn-rename').onclick = renameProject;
-  $('btn-delete').onclick = deleteProject;
   $('btn-import').onclick = () => $('file-import').click();
   $('btn-add-say').onclick = addSayBlock;
-  document.getElementById('project-select').onchange = (e) => { if (e.target.value) openProject(e.target.value); };
-  document.getElementById('file-import').onchange = importProjectFile;
+  $('file-import').onchange = importProjectFile;
+  $('story-select').onchange = (e) => {
+    const next = e.target.value;
+    if (!next || !state.project) return;
+    if (next === state.project.slug) return;
+    // openStory() flushes the outgoing story before reading the next one, so
+    // switching mid-edit cannot lose the last keystrokes.
+    openStory(state.project.projectSlug, next);
+  };
 
   // Last line of defence: the tab is closing mid-edit, before the debounce
   // fired. `keepalive` lets the request outlive the page. Browsers cap such
@@ -1708,12 +1970,15 @@ function wireChrome() {
     if (!state.project || !state.dirty || autosave.inFlight) return;
     const blob = new Blob([JSON.stringify(saveBody())], { type: 'application/json' });
     if (blob.size > 60000) return;
-    fetch(`/api/projects/${state.project.slug}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: blob,
-      keepalive: true,
-    }).catch(() => {});
+    fetch(
+      `/api/projects/${encodeURIComponent(state.project.projectSlug)}/stories/${encodeURIComponent(state.project.slug)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: blob,
+        keepalive: true,
+      }
+    ).catch(() => {});
   });
 
   // Ctrl+S saves, Ctrl+Enter validates.
@@ -1730,25 +1995,6 @@ function wireChrome() {
       deleteBlock();
     }
   });
-}
-
-async function newProject() {
-  const slug = prompt('Project name (lowercase, no spaces)');
-  if (!slug) return;
-  const packName = prompt('Story title', slug) || slug;
-
-  const res = await fetch('/api/projects', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, meta: { packName, character: slug } }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json();
-    alert(err.detail || 'Could not create the project.');
-    return;
-  }
-  await openProject(slug);
 }
 
 /** The exact payload the server expects, built from live state. */
@@ -1787,11 +2033,14 @@ async function save({ silent = false } = {}) {
 
   autosave.inFlight = (async () => {
     try {
-      const res = await fetch(`/api/projects/${project.slug}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      const res = await fetch(
+        `/api/projects/${encodeURIComponent(project.projectSlug)}/stories/${encodeURIComponent(project.slug)}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      );
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -1802,7 +2051,7 @@ async function save({ silent = false } = {}) {
       // a save finishing after a switch must not mark the new project clean.
       if (state.project === project) {
         state.dirty = false;
-        $('project-name').classList.remove('dirty');
+        markStoryClean();
         renderTabs();
         setStatus('compile', silent ? 'autosaved' : 'saved', 'ok');
         if (state.lastCompile) {
@@ -1843,7 +2092,9 @@ async function validate() {
   await flushAutosave();
   setStatus('compile', 'compiling…');
 
-  const res = await fetch(`/api/projects/${state.project.slug}/compile`);
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(state.project.projectSlug)}/stories/${encodeURIComponent(state.project.slug)}/compile`
+  );
   const result = await res.json();
   state.lastCompile = result;
 
@@ -1866,47 +2117,16 @@ async function validate() {
   }
 }
 
-async function exportPack() {
+async function exportStory() {
   if (!state.project) return;
   if (state.dirty) { await save(); }
-  const fmt = document.getElementById('export-format')?.value || 'pack';
-  window.location = `/api/projects/${state.project.slug}/export?format=${encodeURIComponent(fmt)}`;
+  const fmt = document.getElementById('export-format')?.value || 'json';
+  window.location = `/api/projects/${encodeURIComponent(state.project.projectSlug)}/stories/${encodeURIComponent(state.project.slug)}/export?format=${encodeURIComponent(fmt)}`;
 }
 
-async function duplicateProject() {
-  if (!state.project) return;
-  const new_slug = prompt('New project name (lowercase, no spaces)', state.project.slug + '-copy');
-  if (!new_slug) return;
-  const res = await fetch(`/api/projects/${state.project.slug}/duplicate`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ new_slug }),
-  });
-  if (!res.ok) { alert((await res.json()).detail || 'Duplicate failed'); return; }
-  await refreshProjectList();
-  await openProject(new_slug);
-}
-
-async function renameProject() {
-  if (!state.project) return;
-  const new_slug = prompt('New project name (lowercase, no spaces)', state.project.slug);
-  if (!new_slug || new_slug === state.project.slug) return;
-  const res = await fetch(`/api/projects/${state.project.slug}/rename`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ new_slug }),
-  });
-  if (!res.ok) { alert((await res.json()).detail || 'Rename failed'); return; }
-  await refreshProjectList();
-  await openProject(new_slug);
-}
-
-async function deleteProject() {
-  if (!state.project) return;
-  if (!confirm(`Delete project "${state.project.slug}"? This removes its folder and all .story files.`)) return;
-  const slug = state.project.slug;
-  const res = await fetch(`/api/projects/${slug}`, { method: 'DELETE' });
-  if (!res.ok) { alert((await res.json()).detail || 'Delete failed'); return; }
-  state.project = null;
-  await refreshProjectList();
+/** Back to the manager, where stories and projects actually get managed. */
+function openManager() {
+  window.location.href = '/manager';
 }
 
 async function importProjectFile(e) {
@@ -1919,8 +2139,7 @@ async function importProjectFile(e) {
   });
   e.target.value = '';
   if (!res.ok) { alert((await res.json()).detail || 'Import failed'); return; }
-  await refreshProjectList();
-  await openProject(slug);
+  window.location.href = '/manager';
 }
 
 // The preview compiles the files on disk, so anything pending is flushed first.
@@ -1930,7 +2149,10 @@ async function play() {
     setStatus('compile', 'saving before preview…');
     await flushAutosave();
   }
-  window.open(`play.html?project=${encodeURIComponent(state.project.slug)}`, '_blank');
+  window.open(
+    `play.html?project=${encodeURIComponent(state.project.projectSlug)}&story=${encodeURIComponent(state.project.slug)}`,
+    '_blank'
+  );
 }
 
 boot();

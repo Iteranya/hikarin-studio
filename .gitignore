@@ -5,8 +5,9 @@ __pycache__/
 .venv/
 uv.lock.bak
 
-# Demo project: keep the folder shape, ignore local authoring state
-projects/*/assets/
+# Authoring content: local packs are the author's data, not the tool's source.
+projects/*/
+!projects/.gitkeep
 
 # Local run log
 server.log

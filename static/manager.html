@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hikarin Studio — Projects</title>
+<link rel="stylesheet" href="studio.css">
+<link rel="stylesheet" href="manager.css">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#14161a">
+</head>
+<body class="manager-body">
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">H</span>
+    <span class="brand-name">Hikarin Studio</span>
+  </div>
+  <div class="project-info">
+    <span class="chip subtle">Projects</span>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn" id="btn-import" title="Import a .hikarin.zip project bundle">Import</button>
+    <input type="file" id="file-import" accept=".zip" hidden>
+    <button class="btn primary" id="btn-new" title="Create a project">New project</button>
+  </div>
+</header>
+
+<main class="manager-main">
+
+  <aside class="manager-side">
+    <div class="pane-head">Projects</div>
+    <div class="project-list" id="project-list">
+      <!-- filled by manager.js -->
+    </div>
+    <div class="manager-side-foot">
+      <span id="project-total">0 projects</span>
+    </div>
+  </aside>
+
+  <section class="manager-detail" id="manager-detail">
+    <div class="empty-state" id="manager-empty">
+      <p class="empty-title">No project selected</p>
+      <p class="empty-hint">Pick a project on the left, or press <b>New project</b>.</p>
+    </div>
+  </section>
+
+</main>
+
+<!-- ── PROJECT DIALOG ──────────────────────────────────────────────── -->
+<div class="modal-backdrop" id="project-dialog" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <span id="project-dialog-title">New project</span>
+      <button class="btn tiny ghost" id="project-dialog-close">✕</button>
+    </div>
+    <div class="dialog-body">
+      <label class="field">
+        <span class="field-label">Project name</span>
+        <input type="text" id="pf-slug" class="input" placeholder="my_pack" autocomplete="off">
+        <span class="field-hint">Lowercase, no spaces. This is the folder name under <code>projects/</code>.</span>
+      </label>
+      <label class="field">
+        <span class="field-label">Pack title</span>
+        <input type="text" id="pf-packname" class="input" placeholder="My Pack" autocomplete="off">
+        <span class="field-hint">What the pack is called in the runtime's pack list.</span>
+      </label>
+      <label class="field">
+        <span class="field-label">Description</span>
+        <input type="text" id="pf-desc" class="input" placeholder="Made with Hikarin Studio" autocomplete="off">
+      </label>
+      <label class="field" id="pf-story-field">
+        <span class="field-label">First story</span>
+        <input type="text" id="pf-story" class="input" placeholder="cupa" autocomplete="off">
+        <span class="field-hint">The first story in this pack. You can add more later.</span>
+      </label>
+      <p class="dialog-error" id="pf-error" hidden></p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="project-dialog-cancel">Cancel</button>
+      <button class="btn primary" id="project-dialog-ok">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── STORY DIALOG ────────────────────────────────────────────────── -->
+<!-- Its own dialog, not the project one: a story is one character's script, and
+     asking for a pack title and description here was the project form leaking
+     through. A story has a name and a character, nothing else. -->
+<div class="modal-backdrop" id="story-dialog" hidden>
+  <div class="modal modal-narrow">
+    <div class="modal-head">
+      <span id="story-dialog-title">New story</span>
+      <button class="btn tiny ghost" id="story-dialog-close">✕</button>
+    </div>
+    <div class="dialog-body">
+      <label class="field">
+        <span class="field-label">Character</span>
+        <input type="text" id="sf-character" class="input" placeholder="cupa" autocomplete="off">
+        <span class="field-hint">Whose script this is. It becomes the file name the story exports as, so it must be lowercase with no spaces.</span>
+      </label>
+      <label class="field">
+        <span class="field-label">Story name</span>
+        <input type="text" id="sf-slug" class="input" placeholder="cupa" autocomplete="off">
+        <span class="field-hint">The folder under <code>stories/</code>. Defaults to the character name; change it only if one story needs two scripts.</span>
+      </label>
+      <p class="dialog-error" id="sf-error" hidden></p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="story-dialog-cancel">Cancel</button>
+      <button class="btn primary" id="story-dialog-ok">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ASSET MANAGER (modal) ───────────────────────────────────────── -->
+<!-- Assets belong to the project, so they are managed here, not in the story
+     editor. Same module the editor mounts; different host. -->
+<div class="modal-backdrop" id="assets-backdrop" hidden>
+  <div class="modal assets-modal">
+    <div class="modal-head">
+      <span>Assets — <span id="assets-project">—</span></span>
+      <div class="modal-head-actions">
+        <button class="btn tiny ghost" id="assets-refresh" title="Re-read the folders on disk">↻</button>
+        <button class="btn tiny ghost" id="assets-close" title="Close (Esc)">✕</button>
+      </div>
+    </div>
+
+    <div class="asset-tabs" id="asset-tabs"></div>
+
+    <div class="asset-drop" id="asset-drop">
+      <div class="asset-drop-text">Drop images or audio here → <b id="asset-drop-target">—</b></div>
+      <div class="asset-drop-row">
+        <select id="asset-target" title="Where uploads land"></select>
+        <button class="btn tiny" id="asset-browse">Choose files…</button>
+        <input type="file" id="asset-file" multiple hidden>
+      </div>
+    </div>
+
+    <div class="assets-body" id="assets-body"></div>
+    <div class="assets-foot" id="assets-foot"></div>
+    <div class="assets-status" id="assets-status"></div>
+  </div>
+</div>
+
+<!-- ── CONFIRM DIALOG ──────────────────────────────────────────────── -->
+<div class="modal-backdrop" id="confirm-dialog" hidden>
+  <div class="modal modal-narrow">
+    <div class="modal-head">
+      <span id="confirm-title">Are you sure?</span>
+    </div>
+    <div class="dialog-body">
+      <p id="confirm-text" class="confirm-text"></p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="confirm-cancel">Cancel</button>
+      <button class="btn danger" id="confirm-ok">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="manager.js"></script>
+</body>
+</html>

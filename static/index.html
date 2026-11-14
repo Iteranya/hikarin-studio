@@ -14,35 +14,38 @@
 
 <!-- ── TOP BAR ─────────────────────────────────────────────────────── -->
 <header class="topbar">
+  <!-- First in the bar and first in the tab order: it is a back button. The
+       editor is one story deep inside a project, so the way out belongs at the
+       left edge where a back affordance is expected, not in a row of actions. -->
+  <button class="topbar-back" id="btn-manager" title="Back to projects (Esc)">← <span>Projects</span></button>
+
   <div class="brand">
     <span class="brand-mark">H</span>
     <span class="brand-name">Hikarin Studio</span>
   </div>
 
   <div class="project-info" id="project-info">
-    <span class="chip" id="project-name">no project open</span>
-    <span class="chip subtle" id="project-character">—</span>
+    <span class="chip subtle" id="project-character" title="Project">—</span>
+    <div class="story-switch">
+      <select id="story-select" class="select story-select" title="Switch story in this project" disabled>
+        <option value="">no story open</option>
+      </select>
+      <span class="story-dirty" id="story-dirty" hidden title="Unsaved changes">•</span>
+    </div>
   </div>
 
   <div class="topbar-actions">
-    <select id="project-select" class="select" title="Open a project"></select>
-    <button class="btn" id="btn-new" title="Create a new project">New</button>
-    <button class="btn" id="btn-duplicate" title="Duplicate current project">Duplicate</button>
-    <button class="btn" id="btn-rename" title="Rename current project">Rename</button>
-    <button class="btn" id="btn-delete" title="Delete current project">Delete</button>
     <button class="btn" id="btn-import" title="Import a .hikarin.zip project bundle">Import</button>
     <input type="file" id="file-import" accept=".zip" hidden>
-    <button class="btn" id="btn-assets" disabled title="Add images, characters and sounds">🎨 Assets</button>
+    
     <button class="btn" id="btn-save" title="Save (Ctrl+S)">💾 Save</button>
     <button class="btn primary" id="btn-play" disabled title="Test this scene">▶ Play</button>
     <select id="export-format" class="select" title="Export format">
-      <option value="pack">Pack (.zip)</option>
       <option value="json">Story (.json)</option>
       <option value="txt">Script (.txt)</option>
       <option value="md">Script (.md)</option>
-      <option value="bundle">Project (.hikarin.zip)</option>
     </select>
-    <button class="btn" id="btn-export" disabled title="Export current project">📦 Export</button>
+    <button class="btn" id="btn-export" disabled title="Export this story">📦 Export</button>
   </div>
 </header>
 
@@ -67,7 +70,7 @@
 
     <div class="empty-state" id="empty-state">
       <p class="empty-title">No story open</p>
-      <p class="empty-hint">Open a folder, or press <b>New</b> to start one.</p>
+      <p class="empty-hint">Projects and stories live in the manager.</p>
     </div>
 
   </section>

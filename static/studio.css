@@ -51,6 +51,43 @@ html, body {
 
 .brand { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 
+/* The way out of the editor. Styled as navigation, not as one of the action
+   buttons: it sits at the left edge before the brand, and stays visually quiet
+   until you reach for it. */
+.topbar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 4px 9px 4px 7px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.topbar-back:hover {
+  background: var(--bg-raise);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.topbar-back:focus-visible {
+  outline: none;
+  border-color: var(--accent-dim);
+  color: var(--text);
+}
+
+/* On a narrow bar the word goes, the arrow stays — it is still unmistakably
+   "back", and the title attribute says where. */
+@media (max-width: 700px) {
+  .topbar-back span { display: none; }
+  .topbar-back { padding: 4px 7px; font-size: 14px; }
+}
+
 .brand-mark {
   display: grid;
   place-items: center;
@@ -73,6 +110,71 @@ html, body {
   min-width: 0;
 }
 
+/* Story switcher: one dropdown for the stories inside the open project. A
+   project is a pack, and the editor edits one story at a time, so this is the
+   fastest way to hop between them without going back to the manager. */
+.story-switch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.story-select {
+  max-width: 240px;
+  min-width: 120px;
+  font-weight: 600;
+  padding-right: 20px;
+}
+
+/* Top-bar selects. This class had no rule at all, so the story picker and the
+   export dropdown were falling through to the browser's default control: a
+   white plate with light grey text, which is unreadable against this theme and
+   invisible to anyone who did not already know it was a dropdown. Everywhere
+   else a select is styled by `.field select` or `.asset-drop select`; these two
+   sit in the top bar, so they needed their own. */
+.select {
+  padding: 4px 22px 4px 8px;
+  background-color: var(--bg-raise);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  /* The dropdown arrow is drawn by the OS and is usually black, which vanishes
+     on a dark background. `color-scheme` tells the browser this control is dark
+     so it picks a light arrow and a dark option list. */
+  color-scheme: dark;
+}
+
+.select:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  border-color: #3c4450;
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+.select:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.story-dirty {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--warn);
+  font-size: 15px;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .chip {
   padding: 2px 8px;
   background: var(--bg-raise);
@@ -86,7 +188,22 @@ html, body {
 }
 
 .chip.subtle { opacity: .6; }
-#project-name.dirty { border-color: var(--warn); color: var(--warn); }
+.story-select.dirty { border-color: var(--warn); }
+
+/* ── variable picker ──────────────────────────────────────────────────── */
+
+.var-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--text-faint);
+}
+
+.var-tag.scope-world { color: var(--accent); border-color: var(--accent-dim); }
 
 .topbar-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 
@@ -299,6 +416,20 @@ html, body {
   border-color: var(--accent-dim);
 }
 
+input.input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  padding: 4px 7px;
+}
+
+input.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .field-hint { margin-top: 3px; font-size: 10px; line-height: 1.4; color: var(--text-faint); }
 
 .inspector-title {
@@ -399,10 +530,16 @@ html, body {
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
   font-size: 12px;
+  flex: 0 0 auto;
   font-weight: 600;
 }
 
 .picker-body {
+  /* min-height: 0 so the grid is the scroll region and the head stays put. A
+     flex child without it refuses to shrink below its content height and shoves
+     the modal's own overflow:hidden into clipping the last row. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 10px;
   display: grid;

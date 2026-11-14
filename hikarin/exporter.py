@@ -1,20 +1,26 @@
 """Resource pack export.
 
-Takes a project's compiled actions and produces a zip that Minecraft will load
-as a resource pack::
+Takes a project's compiled stories and produces a loadable resource pack::
 
     <pack>.zip
         pack.mcmeta
-        pack.png                       (optional)
-        assets/hikarin/<character>.json    <- the compiled story
-        assets/hikarin/textures/...        <- copied from the project's assets/
+        pack.png                             (optional)
+        assets/hikarin/<story>.json          <- one compiled story per character
+        assets/hikarin/<story>.json          ...
+        assets/hikarin/textures/...          <- copied from the project's images/
+        assets/hikarin/sounds/...            <- copied from the project's sounds/
 
 The engine reads scenes from ``assets/hikarin/<trigger>.json``, where the
-trigger is the character's name (the maid's custom name, lowercased). Textures
-resolve from the same namespace first, then the framework's own art, then a
-2024-era ``mobtalkerredux`` pack.
+trigger is the character's name (the story's custom name, lowercased). One file
+per character is the whole reason a project can hold several stories: the pack
+is the unit the runtime installs, and the story is the unit it loads.
 
-Pack format for Minecraft 1.20.1 is 15.
+Textures resolve from the same namespace first, then the framework's own art,
+then a 2024-era ``mobtalkerredux`` pack.
+
+``pack.mcmeta`` and ``pack_format`` are the resource pack format's own file and
+field names, not ours to rename — they are what the runtime reads. The default
+below is the value for 1.20.1.
 """
 
 from __future__ import annotations
@@ -26,36 +32,70 @@ from pathlib import Path
 
 from .compiler import CompileResult
 
-MC_PACK_FORMAT_1201 = 15
+DEFAULT_PACK_FORMAT = 15
 
 # Namespace the engine reads scenes and textures from.
 CONTENT_NAMESPACE = "hikarin"
 
+IMAGE_EXT = (".png", ".jpg", ".jpeg")
+SOUND_EXT = (".ogg", ".wav", ".mp3")
+
+
+def story_filename(story_meta: dict) -> str:
+    """The JSON file name inside the pack for one story.
+
+    This is the engine's trigger — the story's name, lowercased, spaces to
+    underscores. It is also what the author sees in the story list, so it has to
+    be predictable rather than clever.
+    """
+    raw = (story_meta.get("character") or story_meta.get("slug") or "story").strip()
+    return raw.lower().replace(" ", "_")
+
 
 def build_pack(
     meta: dict,
-    result: CompileResult,
+    stories: dict[str, tuple[dict, CompileResult]],
     project_path: Path,
+    pack_format: int | None = None,
 ) -> bytes:
     """Return the bytes of a resource pack zip.
 
-    Raises ValueError if the compile produced errors, because shipping a broken
-    story is worse than refusing to ship.
-    """
-    if result.errors:
-        raise ValueError("Cannot export: the story has compile errors.")
+    Args:
+        meta:   the project manifest (packName, description).
+        stories: ``{story slug: (story meta, compile result)}``.
+        project_path: the project folder, for images/ and sounds/.
+        pack_format: the resource pack format version to target. Defaults to
+            ``DEFAULT_PACK_FORMAT``. This is an export concern, not a project
+            property: the same pack of scripts can be built for several runtime
+            versions, so it belongs on this call rather than in project.json.
 
-    character = (meta.get("character") or "character").lower().replace(" ", "_")
-    pack_name = meta.get("packName") or character
+    Raises ValueError if any story failed to compile, because shipping a broken
+    script is worse than refusing to ship.
+    """
+    broken = [
+        f"{slug}: {result.errors[0]}"
+        for slug, (_story_meta, result) in stories.items()
+        if result.errors
+    ]
+    if broken:
+        raise ValueError(
+            "Cannot export, the story has compile errors:\n  " + "\n  ".join(broken)
+        )
+    if not stories:
+        raise ValueError("Cannot export: this project has no stories.")
+
+    pack_name = meta.get("packName") or "Hikarin Pack"
     description = meta.get("description") or "Made with Hikarin Studio"
-    pack_format = int(meta.get("packFormat") or MC_PACK_FORMAT_1201)
+    if pack_format is None:
+        pack_format = DEFAULT_PACK_FORMAT
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        # pack.mcmeta — Minecraft reads this to know the pack exists and its version.
+        # pack.mcmeta — the format's own manifest: it tells the runtime this
+        # pack exists and which format version it targets.
         mcmeta = {
             "pack": {
-                "description": f"{description}\nCharacter: {character}",
+                "description": f"{description}\nStories: {len(stories)}",
                 "pack_format": pack_format,
             }
         }
@@ -67,24 +107,32 @@ def build_pack(
         if icon.is_file():
             zf.write(icon, "pack.png")
 
-        # The story itself. The SDK generated this into scripts/ at compile
-        # time; here it is written fresh on every export, which is why there is
-        # no scripts/ folder to hand-edit.
-        zf.writestr(
-            f"assets/{CONTENT_NAMESPACE}/{character}.json",
-            json.dumps(result.actions, indent=2, ensure_ascii=False),
-        )
+        # One JSON per story. Two stories claiming the same trigger would
+        # silently overwrite each other inside the zip, so refuse instead.
+        written: dict[str, str] = {}
+        for slug, (story_meta, result) in stories.items():
+            filename = story_filename(story_meta)
+            if filename in written:
+                raise ValueError(
+                    f'Stories "{written[filename]}" and "{slug}" both compile to '
+                    f"{filename}.json. Give each story its own character name."
+                )
+            written[filename] = slug
+            zf.writestr(
+                f"assets/{CONTENT_NAMESPACE}/{filename}.json",
+                json.dumps(result.actions, indent=2, ensure_ascii=False),
+            )
 
         # images/ becomes textures/. That single rename is the whole mapping,
         # and it is why the authoring folders are named after what they hold
-        # rather than after Minecraft's internal layout.
+        # rather than after the pack layout.
         #
         # Note the pack.png exclusion: it was already written at the zip root,
         # and copying it again as a texture would ship a stray image.
         images = project_path / "images"
         if images.is_dir():
-            for file in images.rglob("*"):
-                if not file.is_file() or file.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            for file in sorted(images.rglob("*")):
+                if not file.is_file() or file.suffix.lower() not in IMAGE_EXT:
                     continue
                 rel = file.relative_to(images).as_posix()
                 if rel == "pack.png":
@@ -94,8 +142,8 @@ def build_pack(
         # sounds/ maps one-to-one, keeping the music/ and sound/ split.
         sounds = project_path / "sounds"
         if sounds.is_dir():
-            for file in sounds.rglob("*"):
-                if not file.is_file() or file.suffix.lower() not in (".ogg", ".wav", ".mp3"):
+            for file in sorted(sounds.rglob("*")):
+                if not file.is_file() or file.suffix.lower() not in SOUND_EXT:
                     continue
                 rel = file.relative_to(sounds).as_posix()
                 zf.write(file, f"assets/{CONTENT_NAMESPACE}/sounds/{rel}")
@@ -105,11 +153,11 @@ def build_pack(
 
 def export_filename(meta: dict) -> str:
     """A safe file name for the zip, e.g. 'Cupa's Story' -> cupa-s-story.zip."""
-    raw = (meta.get("packName") or meta.get("character") or "story").lower()
+    raw = (meta.get("packName") or meta.get("slug") or "pack").lower()
     safe = "".join(c if c.isalnum() else "-" for c in raw).strip("-")
     while "--" in safe:
         safe = safe.replace("--", "-")
-    return f"{safe or 'story'}.zip"
+    return f"{safe or 'pack'}.zip"
 
 
 # ── extra export formats ────────────────────────────────────────────────────
@@ -123,10 +171,6 @@ def _id_to_label(actions):
         if a.get("type") == "label":
             out[a.get("id")] = a.get("label", "")
     return out
-
-
-def _label_for_id(actions, target_id):
-    return _id_to_label(actions).get(target_id, f"id {target_id}")
 
 
 def _render_script(meta, result, markdown=False):
@@ -267,15 +311,32 @@ def build_markdown(meta, result) -> bytes:
     return _render_script(meta, result, markdown=True).encode("utf-8")
 
 
-def build_project_bundle(meta, files, project_path: Path) -> bytes:
-    """Zip the whole authoring project so it can be imported back."""
+def build_project_bundle(meta, stories, project_path: Path) -> bytes:
+    """Zip the whole authoring project so it can be imported back.
+
+    ``stories`` is ``{slug: (story meta, files)}`` — the bundle carries the
+    authoring blocks, not the compiled actions, because a bundle exists to be
+    reopened in the editor.
+    """
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        meta2 = dict(meta)
-        meta2["files"] = list(files.keys())
+        meta2 = {k: v for k, v in meta.items() if k != "stories"}
+        meta2["stories"] = list(stories)
         zf.writestr("project.json", json.dumps(meta2, indent=2, ensure_ascii=False) + "\n")
-        for name, blocks in files.items():
-            zf.writestr(name, json.dumps(blocks, indent=2, ensure_ascii=False) + "\n")
+
+        for slug, (story_meta, files) in stories.items():
+            body = {k: v for k, v in story_meta.items() if k != "files"}
+            body["files"] = list(files)
+            zf.writestr(
+                f"stories/{slug}/story.json",
+                json.dumps(body, indent=2, ensure_ascii=False) + "\n",
+            )
+            for name, blocks in files.items():
+                zf.writestr(
+                    f"stories/{slug}/{name}",
+                    json.dumps(blocks, indent=2, ensure_ascii=False) + "\n",
+                )
+
         # assets
         for sub in ("images", "sounds"):
             root = project_path / sub

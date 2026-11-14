@@ -1,13 +1,13 @@
 /* Preview harness for a Hikarin story.
  *
- * Loads the compiled actions from /api/projects/{slug}/play — the same
+ * Loads the compiled actions from /api/projects/{project}/stories/{story}/play — the same
  * compiler that builds the exported resource pack, so what you test here is
  * what ships.
  *
  * The transport controls mirror what a script author actually needs:
  *
  *   Play   resume at the checkpoint — byte-for-byte what right-clicking the
- *          maid does in game, so the preview cannot lie about behaviour
+ *          story does in game, so the preview cannot lie about behaviour
  *   Stop   halt, keep everything (examine the frozen state)
  *   Reset  clear every variable and the checkpoint, then start over
  *
@@ -15,13 +15,14 @@
  * goes back to its opening is Reset, because that is the only thing the game
  * itself offers: the cursor advances and never rewinds.
  *
- * URL: play.html?project=cupa
+ * URL: play.html?project=<project>&story=<story>
  */
 
 const $ = (id) => document.getElementById(id);
 
 const params = new URLSearchParams(location.search);
-const slug = params.get('project');
+const project = params.get('project');
+const story = params.get('story');
 
 const state = {
   payload: null,
@@ -35,16 +36,18 @@ const state = {
 // ── boot ────────────────────────────────────────────────────────────────────
 
 async function boot() {
-  if (!slug) {
-    showErrors(['No project given. Open this from the studio.']);
+  if (!project || !story) {
+    showErrors(['No story given. Open this from the studio.']);
     return;
   }
 
-  const res = await fetch(`/api/projects/${slug}/play`);
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(project)}/stories/${encodeURIComponent(story)}/play`
+  );
   const payload = await res.json();
   state.payload = payload;
 
-  $('play-title').textContent = `${payload.character ?? slug} — preview`;
+  $('play-title').textContent = `${payload.character ?? story} — preview`;
 
   if (!payload.ok) {
     showErrors(payload.errors, payload.warnings);

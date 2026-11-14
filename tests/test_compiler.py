@@ -9,7 +9,7 @@ import pytest
 from hikarin.blocks import parse_literal
 from hikarin.compiler import compile_project, suggest
 
-PROJECT = {"character": "cupa", "startLabel": "start", "packName": "Test", "packFormat": 15}
+PROJECT = {"character": "cupa", "startLabel": "start", "packName": "Test"}
 
 
 def block(kind: str, **data) -> dict:
@@ -45,7 +45,7 @@ def test_start_label_file_compiled_first_regardless_of_tab_order():
 def test_conditional_target_resolved_to_label_id():
     files = {"main.story": [
         block("label", name="start"),
-        block("if", scope="MAID", var="seen.night", condition="equal", value="true", _target="night"),
+        block("if", scope="MAID", var="seen.night", condition="equal", value="true", _target="night"),  # legacy local
         block("idle"),
         block("end"),
         block("label", name="night"),
@@ -57,7 +57,9 @@ def test_conditional_target_resolved_to_label_id():
     cond = next(a for a in r.actions if a["type"] == "conditional")
     night = next(a for a in r.actions if a["type"] == "label" and a["label"] == "night")
     assert cond["end"] == night["id"]
-    assert cond["scope"] == "MAID"
+    # MAID is a legacy authoring value for "this story's own state"; it emits no
+    # scope key, because a bare name is how the engine says local.
+    assert "scope" not in cond
     assert cond["value"] is True, "value must be a real boolean"
 
 

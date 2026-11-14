@@ -21,7 +21,7 @@ Two rules hold everywhere here:
   start with ``images/`` or ``sounds/`` — anything else, including ``..``, is a
   403-worthy mistake rather than a clever input;
 * every name written to disk is squeezed to lowercase ``[a-z0-9._-]``, because
-  these names become Minecraft texture paths and a space in a texture path is a
+  these names become texture paths and a space in a texture path is a
   sprite that silently does not load.
 """
 

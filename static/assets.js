@@ -11,6 +11,13 @@
  * back to the server, and every mutation re-renders from the inventory the
  * server returns — no local guessing about what landed.
  *
+ * This window is PROJECT-scoped, because a pack's art is shared by every story
+ * in it. It used to live in the story editor, which was simply wrong: it read
+ * and wrote /api/projects/<project>/assets/... while being opened from a story.
+ * It is host-agnostic now — the manager mounts it against the selected project,
+ * and the editor mounts it against the open story's parent project. Neither
+ * page owns it.
+ *
  * Uploads are base64 JSON to the server. The alternative is multipart, which
  * means adding python-multipart to the project; a sprite is small enough that
  * the encoding tax is cheaper than an extra install that can break `uv run`.
@@ -21,14 +28,29 @@ const $ = (id) => document.getElementById(id);
 const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'webp'];
 const AUDIO_EXT = ['ogg', 'wav', 'mp3'];
 
-let ctx = null;              // { state, onChange }
+let host = null;             // see the `host` shape on initAssets
 let activeTab = 'characters';
 let dragging = 0;
 
 // ── boot ────────────────────────────────────────────────────────────────────
 
+/**
+ * Mount the asset window.
+ *
+ * Assets belong to a PROJECT, not a story: a pack's images/ and sounds/ are
+ * shared by every story in it. So this module is host-agnostic and asks the page
+ * that mounted it for the things it needs:
+ *
+ *   projectSlug()  -> string   which project's assets to read and write
+ *   assets()       -> object   the last inventory this page holds (or null)
+ *   setAssets(a)   -> void     hand a fresh inventory back to the page
+ *   title()        -> string   what to show in the window header
+ *
+ * The editor mounts it against the story it has open; the manager mounts it
+ * against the project you selected. Neither owns it.
+ */
 export function initAssets(context) {
-  ctx = context;
+  host = context;
 
   $('assets-close').onclick = closeAssets;
   $('assets-refresh').onclick = () => refresh();
@@ -86,7 +108,7 @@ export function initAssets(context) {
 }
 
 export function openAssets(tab) {
-  if (!ctx?.state.project) {
+  if (!host?.projectSlug?.()) {
     alert('Open a project first.');
     return;
   }
@@ -110,11 +132,14 @@ export async function deleteAssetPath(path) {
 // ── data ────────────────────────────────────────────────────────────────────
 
 function inv() {
-  return ctx?.state?.project?.assets ?? {};
+  return host?.assets?.() ?? {};
 }
 
+// Assets belong to the project, not the story: a pack's art is shared by every
+// story in it. The host decides which project — the manager passes the selected
+// one, the editor passes the story's parent.
 function slug() {
-  return ctx?.state?.project?.slug ?? '';
+  return host?.projectSlug?.() ?? '';
 }
 
 async function api(method, path, body) {
@@ -136,8 +161,7 @@ async function api(method, path, body) {
 
 function apply(assets) {
   if (!assets) return;
-  ctx.state.project.assets = assets;
-  ctx.onChange?.();
+  host?.setAssets?.(assets);
   render();
 }
 
@@ -215,7 +239,7 @@ function emptyBox(title, hint) {
 function render() {
   if ($('assets-backdrop').hidden) return;
 
-  $('assets-project').textContent = ctx.state.project.meta?.packName || slug();
+  $('assets-project').textContent = host?.title?.() || slug();
   renderTabs();
   renderTargets();
 
@@ -379,7 +403,7 @@ function imagesHTML() {
     <div class="block-head">
       <div class="block-title-wrap">
         <div class="block-title">Pack icon</div>
-        <div class="asset-hint-mini">images/pack.png — the picture in Minecraft's resource pack list</div>
+        <div class="asset-hint-mini">images/pack.png — the pack's icon</div>
       </div>
       ${icon ? `<button class="icon-btn danger" data-act="delete" data-path="images/pack.png" data-label="the pack icon" title="Delete">✕</button>` : ''}
     </div>

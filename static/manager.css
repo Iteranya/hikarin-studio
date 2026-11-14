@@ -1,0 +1,475 @@
+/* Hikarin Studio — project manager (the launcher).
+
+The manager is deliberately a separate page from the editor. Opening the editor
+means committing to one story; the manager is where you decide which project and
+which story that is. Mixing the two is how you end up with a sidebar that is
+half file tree, half project list, and a "project" that means three things.
+*/
+
+.manager-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.manager-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* ── left: project list ────────────────────────────────────────────────── */
+
+.manager-side {
+  width: 280px;
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-pane);
+  border-right: 1px solid var(--line);
+  min-height: 0;
+}
+
+.project-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.project-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  margin-bottom: 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-row:hover { background: var(--bg-raise); }
+
+.project-row.active {
+  background: var(--bg-raise);
+  border-color: var(--accent-dim);
+}
+
+.project-row-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-row-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.manager-side-foot {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ── right: detail ─────────────────────────────────────────────────────── */
+
+.manager-detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 4px;
+}
+
+.detail-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.detail-slug {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.detail-desc {
+  color: var(--text-dim);
+  margin: 8px 0 20px;
+  max-width: 70ch;
+}
+
+.detail-facts {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 10px 0 18px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 20px;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fact-value {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.fact-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+/* ── detail tabs ──────────────────────────────────────────────────────── */
+
+.detail-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 18px;
+}
+
+.detail-tab {
+  padding: 7px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.detail-tab:hover { color: var(--text); }
+
+.detail-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* ── variable list ────────────────────────────────────────────────────── */
+
+.var-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.var-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--bg-pane);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.var-row:hover { border-color: var(--accent-dim); }
+
+.var-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'name type' 'desc desc';
+  gap: 2px 10px;
+  align-items: center;
+}
+
+.var-name {
+  grid-area: name;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.var-desc {
+  grid-area: desc;
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.var-type {
+  grid-area: type;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+}
+
+.var-actions {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity .1s;
+}
+
+.var-row:hover .var-actions,
+.var-row:focus-within .var-actions { opacity: 1; }
+
+/* ── story list ───────────────────────────────────────────────────────── */
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-dim);
+}
+
+.story-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.story-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-pane);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+  width: 100%;
+}
+
+.story-card:hover {
+  background: var(--bg-raise);
+  border-color: var(--accent-dim);
+}
+
+.story-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.story-card-name {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.story-card-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.story-card-actions {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity .1s;
+}
+
+.story-card:hover .story-card-actions,
+.story-card:focus-within .story-card-actions { opacity: 1; }
+
+.story-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--accent-dim);
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: .03em;
+}
+
+.story-badge.broken {
+  background: var(--error);
+}
+
+/* The pack-format box sits beside Export pack: it is an export option, so it
+   belongs next to the button that uses it. */
+.export-fmt {
+  display: inline-flex;
+  align-items: center;
+}
+
+.export-fmt-input {
+  width: 56px;
+  text-align: center;
+  padding: 4px 6px;
+}
+
+/* ── empty / placeholder ──────────────────────────────────────────────── */
+
+.manager-empty-note {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.manager-empty-note code {
+  background: var(--bg-raise);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* ── dialogs ──────────────────────────────────────────────────────────── */
+
+.manager-body .modal-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Breathing room so the dialog never touches the screen edge on a short
+     window, where 70vh would leave almost nothing. */
+  padding: 12px;
+}
+
+/* Taller than the editor's default 70vh: these dialogs are short forms, and on
+   a laptop the default leaves the fields scrolling for no reason. */
+.manager-body .modal {
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+}
+
+.dialog-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* The body is the scroll region, so the head and the footer (with Create)
+     never leave the screen. Without `min-height: 0` a flex child refuses to
+     shrink below its content height: the body pushes the footer past the
+     modal's max-height, `overflow: hidden` clips it, and on a laptop screen
+     the dialog simply has no visible Create button. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* `hidden` has to win over `.field`'s display:flex. Without this the property is
+   set and the browser default `display:none` loses to the class rule, so the
+   "First story" field stays on screen in the rename dialog — set hidden, still
+   visible. Same specificity fight the asset pane had. */
+.field[hidden] { display: none; }
+
+.field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.field-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.dialog-error {
+  margin: 0;
+  padding: 8px 10px;
+  background: rgba(217, 92, 92, .12);
+  border: 1px solid rgba(217, 92, 92, .4);
+  border-radius: var(--radius);
+  color: var(--error);
+  font-size: 12px;
+}
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  /* Never shrink, never scroll away — Create has to be reachable. */
+  flex: 0 0 auto;
+}
+
+.modal-narrow { max-width: 420px; }
+
+.confirm-text {
+  margin: 0;
+  padding: 14px 16px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+/* ── narrow screens ───────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  .manager-main { flex-direction: column; }
+  .manager-side {
+    width: 100%;
+    flex: 0 0 auto;
+    max-height: 38vh;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .manager-detail { padding: 16px; }
+  .detail-head { flex-direction: column; }
+  .detail-actions { justify-content: flex-start; }
+}

@@ -1,4 +1,4 @@
-"""Compiler: many .story files -> one flat JSON the Minecraft engine reads.
+"""Compiler: many .story files -> one flat JSON the engine reads.
 
 The engine reads a single file per character, keyed by file name (the "trigger").
 Authors want many files for sanity — forty idle lines get their own tab so they
@@ -248,9 +248,9 @@ _BAD_SPRITE_CHAR = re.compile(r"[A-Z\s.,!?#@$*\\/:]")
 def validate_sprite_path(location: str | None) -> str | None:
     """Return an error message if a sprite path would break, else None.
 
-    Texture paths are lowercase-only in Minecraft. A capital letter or a space
-    does not fail loudly — it produces a missing texture at runtime, which looks
-    like the artist forgot a file. Better to stop it at compile time.
+    Texture paths are lowercase-only. A capital letter or a space does not fail
+    loudly — it produces a missing texture at runtime, which looks like the
+    artist forgot a file. Better to stop it at compile time.
     """
     if not location:
         return None

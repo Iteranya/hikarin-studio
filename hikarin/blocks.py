@@ -2,7 +2,7 @@
 
 Every block maps to exactly one action in the shipped JSON format. FORMAT.md is
 the source of truth; this module is the translation layer between what the
-editor shows and what the Minecraft engine reads.
+editor shows and what the engine reads.
 
 The editor sends blocks as ``{"kind": "say", "data": {...}}``. The compiler
 turns each into an action dict. Unknown keys in the shipped format are ignored
@@ -42,6 +42,57 @@ CONDITIONS: dict[str, dict[str, Any]] = {
 
 # What the SDK writes into `var` for conditions that do not read it.
 PLACEHOLDER_VAR = "Nyaaa~"
+
+# ── scope vocabulary ────────────────────────────────────────────────────────
+#
+# The studio speaks two scopes: LOCAL and GLOBAL. The engine speaks four, and
+# spells the shared one `WORLD`. Rather than teach an author which NBT compound
+# a name lands in, the studio names the distinction that changes how you write —
+# "this story's business" versus "shared by the pack" — and this table is where
+# that becomes the engine's spelling on the way out.
+#
+# It is a translation, not a rename: `scope` in the compiled JSON stays `WORLD`,
+# because that is the literal string the mod reads. Change it here and the export
+# is wrong, silently.
+#
+# MAID and SCENE map to local. They differ only in which NBT compound holds the
+# value, which is not a distinction an author needs; both are "this story's own
+# state" and both compile to a bare name.
+_SCOPE_TO_ENGINE = {
+    "LOCAL": None,      # bare name, no scope key emitted
+    "GLOBAL": "WORLD",
+    "MAID": None,       # legacy authoring values, still accepted
+    "SCENE": None,
+    "PLAYER": "PLAYER", # read-only, injected by the engine
+}
+
+# The reverse, for reading a script back into the editor.
+_ENGINE_TO_SCOPE = {
+    None: "LOCAL",
+    "": "LOCAL",
+    "WORLD": "GLOBAL",
+    "MAID": "LOCAL",
+    "SCENE": "LOCAL",
+    "PLAYER": "PLAYER",
+}
+
+
+def engine_scope(scope: str | None) -> str | None:
+    """Translate an authoring scope to the engine's spelling.
+
+    Returns ``None`` for a local, which means "emit no scope key at all" — a bare
+    name is how the engine says local.
+    """
+    if not scope:
+        return None
+    return _SCOPE_TO_ENGINE.get(str(scope).upper(), str(scope).upper())
+
+
+def authoring_scope(scope: str | None) -> str:
+    """Translate an engine scope back to what the studio shows."""
+    if not scope:
+        return "LOCAL"
+    return _ENGINE_TO_SCOPE.get(str(scope).upper(), "LOCAL")
 
 POSITIONS = [
     {"value": "CENTER", "label": "Centre"},
@@ -278,8 +329,9 @@ def _to_action_if(d: dict) -> dict:
         # `end` is resolved to an action id in the second pass.
         "end": 0,
     }
-    if d.get("scope") and needs_var:
-        action["scope"] = d["scope"]
+    scope = engine_scope(d.get("scope"))
+    if scope and needs_var:
+        action["scope"] = scope
     if spec.get("needs_value"):
         action["value"] = parse_literal(d.get("value"))
     return action
@@ -292,8 +344,9 @@ def _to_action_set_var(d: dict) -> dict:
         "var": d.get("var") or "",
         "value": parse_literal(d.get("value")),
     }
-    if d.get("scope"):
-        action["scope"] = d["scope"]
+    scope = engine_scope(d.get("scope"))
+    if scope:
+        action["scope"] = scope
     return action
 
 
@@ -338,7 +391,7 @@ def _to_action_command(d: dict) -> dict:
 def _to_action_play_level(d: dict) -> dict:
     """Leave the VN and play a PvZ Fusion custom level, then come back.
 
-    This is a PvZ-Fusion extension, not a Minecraft/TLM action. The shipped
+    This is a PvZ-Fusion extension, not a TLM action. The shipped
     JSON keeps level names (human-readable, typo-checked) plus optional
     resume labels. ``on_complete`` empty means fall through to the next
     block; ``on_fail`` empty means the runtime decides (retry by default).
@@ -478,7 +531,7 @@ def block_from_action(action: dict) -> dict | None:
         return {"kind": kind, "data": {"target": action.get("label", "")}}
     if kind == "if":
         data = {
-            "scope": action.get("scope"),
+            "scope": authoring_scope(action.get("scope")),
             "var": action.get("var", ""),
             "condition": action.get("condition", "equal"),
             "value": action.get("value"),
@@ -491,7 +544,7 @@ def block_from_action(action: dict) -> dict | None:
         return {"kind": kind, "data": {"target": action.get("label", "")}}
     if kind == "setVar":
         return {"kind": kind, "data": {
-            "scope": action.get("scope"),
+            "scope": authoring_scope(action.get("scope")),
             "var": action.get("var", ""),
             "operation": action.get("action", "set"),
             "value": action.get("value"),
