@@ -241,12 +241,11 @@ wrong, it is one line to add.
 
 ---
 
-## Open questions
+## Settled
 
-1. **Does the manager's Orchestrators tab preview what would be available?** A
-   "simulate" panel could set variables and show which events light up. Useful,
-   but it is a second evaluator and the story preview already exists. Default:
-   **not in v1.**
-2. **Should `action` events carry a display label** separate from the event name,
-   for the runtime's menu? Default: **no**, the event name is the label until
-   something actually needs otherwise.
+- **No display label on events.** The name is the only identifier; what the player
+  reads is the runtime's to decide. Presentation is a renderer job, and a second
+  field here would just move a renderer decision into the data.
+- **No simulate panel in v1.** Previewing which events light up is gameplay /
+  testing simulation, not authoring. It belongs with the rest of the test tooling,
+  once everything else is done.
