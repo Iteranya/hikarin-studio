@@ -125,33 +125,6 @@ half file tree, half project list, and a "project" that means three things.
   max-width: 70ch;
 }
 
-.detail-facts {
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
-  padding: 10px 0 18px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 20px;
-}
-
-.fact {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.fact-value {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.fact-label {
-  font-size: 11px;
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: .04em;
-}
-
 /* ── detail tabs ──────────────────────────────────────────────────────── */
 
 .detail-tabs {

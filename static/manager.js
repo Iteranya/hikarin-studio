@@ -141,7 +141,6 @@ function renderDetail() {
   }
 
   const { slug, meta, stories } = state.detail;
-  const totalBlocks = stories.reduce((sum, s) => sum + (s.blockCount || 0), 0);
 
   // header
   const head = document.createElement('div');
@@ -179,13 +178,6 @@ function renderDetail() {
     root.appendChild(desc);
   }
 
-  // facts
-  const facts = document.createElement('div');
-  facts.className = 'detail-facts';
-  facts.appendChild(fact(String(stories.length), stories.length === 1 ? 'story' : 'stories'));
-  facts.appendChild(fact(String(totalBlocks), 'blocks'));
-  root.appendChild(facts);
-
   // tabs: Stories / Variables. Both are project-level, so both live here.
   const tabs = document.createElement('div');
   tabs.className = 'detail-tabs';
@@ -217,14 +209,6 @@ function renderDetail() {
 }
 
 function renderStories(root, slug, stories) {
-  const totalBlocks = stories.reduce((sum, s) => sum + (s.blockCount || 0), 0);
-
-  const facts = document.createElement('div');
-  facts.className = 'detail-facts';
-  facts.appendChild(fact(String(stories.length), stories.length === 1 ? 'story' : 'stories'));
-  facts.appendChild(fact(String(totalBlocks), 'blocks'));
-  root.appendChild(facts);
-
   const sectionHead = document.createElement('div');
   sectionHead.className = 'section-head';
   const sectionTitle = document.createElement('span');
@@ -316,20 +300,6 @@ function storyCard(s) {
   card.appendChild(main);
   card.appendChild(cardActions);
   return card;
-}
-
-function fact(value, label) {
-  const wrap = document.createElement('div');
-  wrap.className = 'fact';
-  const v = document.createElement('span');
-  v.className = 'fact-value';
-  v.textContent = value;
-  const l = document.createElement('span');
-  l.className = 'fact-label';
-  l.textContent = label;
-  wrap.appendChild(v);
-  wrap.appendChild(l);
-  return wrap;
 }
 
 function button(text, cls, onclick, title) {
