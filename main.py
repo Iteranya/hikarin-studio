@@ -38,6 +38,7 @@ from hikarin.exporter import (
     export_filename_for,
     story_filename,
 )
+from hikarin.export_formats import EXPORT_FORMATS, defaults, get_format, public_formats
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -134,6 +135,9 @@ def get_meta():
         # story's own state) and global (shared by every story in the pack). The
         # engine has four and spells the shared one WORLD; hikarin.blocks owns
         # that translation, so nothing here has to know it.
+        # The export menu. Adding a format means adding an entry to
+        # hikarin.export_formats, not editing this file or the manager's HTML.
+        "exportFormats": public_formats(),
         "scopes": [
             {"value": "LOCAL", "label": "Local — this story only"},
             {"value": "GLOBAL", "label": "Global — shared across the pack"},

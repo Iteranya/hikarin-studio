@@ -343,18 +343,105 @@ half file tree, half project list, and a "project" that means three things.
   background: var(--error);
 }
 
-/* The pack-format box sits beside Export pack: it is an export option, so it
-   belongs next to the button that uses it. */
-.export-fmt {
-  display: inline-flex;
+/* ── export dialog ────────────────────────────────────────────────────── */
+
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.export-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.export-option:hover { border-color: var(--accent-dim); }
+
+.export-option.active {
+  border-color: var(--accent);
+  background: var(--bg-raise);
+}
+
+.export-option input[type='radio'] {
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.export-option-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.export-option-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.export-option-ext {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Parameters the chosen format declares. Empty for formats that need none. */
+.export-params-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.export-params-box:empty { display: none; }
+
+.export-param {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'label input' 'hint hint';
+  gap: 3px 10px;
   align-items: center;
 }
 
-.export-fmt-input {
-  width: 56px;
+.export-param-label {
+  grid-area: label;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.export-param-hint {
+  grid-area: hint;
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+.export-param-input {
+  grid-area: input;
+  width: 96px;
   text-align: center;
   padding: 4px 6px;
 }
+
+.export-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.5;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-left: 2px solid var(--accent-dim);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.export-hint:empty { display: none; }
 
 /* ── empty / placeholder ──────────────────────────────────────────────── */
 

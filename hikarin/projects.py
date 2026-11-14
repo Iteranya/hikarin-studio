@@ -625,7 +625,26 @@ def import_project_zip(slug: str, payload: bytes) -> dict[str, Any]:
     if "project.json" not in names:
         candidates = [n for n in names if n.endswith("/project.json")]
         if len(candidates) != 1:
-            raise ProjectError("Zip must contain a single project.json")
+            # The common cause by far: this is an exported resource pack, not a
+            # project bundle. Both are .zip, and the pack has no project.json —
+            # it has pack.mcmeta and assets/. Saying only "must contain a single
+            # project.json" reads like a corrupt file rather than the wrong
+            # export button.
+            if "pack.mcmeta" in names or any(n.startswith("assets/") for n in names):
+                raise ProjectError(
+                    "That is a resource pack, not a project bundle. A pack is what "
+                    "the game loads (pack.mcmeta and assets/); a bundle is what "
+                    "this tool re-imports (project.json and stories/). Export it "
+                    "again with Export bundle, not Export pack."
+                )
+            if candidates:
+                raise ProjectError(
+                    f"Zip has {len(candidates)} project.json files; expected one."
+                )
+            raise ProjectError(
+                "No project.json in that zip, so it is not a project bundle. "
+                "Export it again with Backup."
+            )
         prefix = candidates[0][: -len("project.json")]
 
     dest_path = dest.resolve()

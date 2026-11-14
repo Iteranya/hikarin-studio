@@ -21,8 +21,8 @@
     <span class="chip subtle">Projects</span>
   </div>
   <div class="topbar-actions">
-    <button class="btn" id="btn-import" title="Import a .hikarin.zip project bundle">Import</button>
-    <input type="file" id="file-import" accept=".zip" hidden>
+    <button class="btn" id="btn-import" title="Import a project bundle (Export bundle) — not a resource pack">Import</button>
+    <input type="file" id="file-import" accept=".zip" title="Project bundle (.hikarin.zip)">
     <button class="btn primary" id="btn-new" title="Create a project">New project</button>
   </div>
 </header>
@@ -80,6 +80,28 @@
     <div class="modal-foot">
       <button class="btn ghost" id="project-dialog-cancel">Cancel</button>
       <button class="btn primary" id="project-dialog-ok">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── EXPORT DIALOG ───────────────────────────────────────────────── -->
+<!-- Export is a choice, so it is a dialog: the format and its options are picked,
+     not inferred from one click. The format list itself comes from the server's
+     export registry, so nothing here names a format. -->
+<div class="modal-backdrop" id="export-dialog" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <span id="export-dialog-title">Export</span>
+      <button class="btn tiny ghost" id="export-close">✕</button>
+    </div>
+    <div class="dialog-body">
+      <div class="export-options" id="export-body"></div>
+      <div class="export-hint" id="export-hint"></div>
+      <p class="dialog-error" id="export-error" hidden></p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="export-cancel">Cancel</button>
+      <button class="btn primary" id="export-ok">Export</button>
     </div>
   </div>
 </div>

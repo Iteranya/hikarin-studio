@@ -21,7 +21,8 @@ const state = {
   projects: [],       // from /api/projects
   activeSlug: null,
   detail: null,       // from /api/projects/{slug}
-  variables: [],      // the selected project's shared variable registry
+  variables: [],      // the selected project's declared globals
+  exportFormats: [],  // from /api/meta — the export registry, drawn not hardcoded
   detailTab: 'stories',
   assets: null,       // the selected project's media inventory
   busy: false,
@@ -39,7 +40,18 @@ async function boot() {
     title: () => state.detail?.meta?.packName || state.activeSlug || '',
   });
   wireChrome();
+  await loadMeta();
   await refresh();
+}
+
+/** The export registry comes from the server, so formats can be added there. */
+async function loadMeta() {
+  try {
+    const meta = await fetch('/api/meta').then((r) => r.json());
+    state.exportFormats = meta.exportFormats ?? [];
+  } catch {
+    state.exportFormats = [];
+  }
 }
 
 // ── data ────────────────────────────────────────────────────────────────────
@@ -150,20 +162,10 @@ function renderDetail() {
   actions.appendChild(button('🎨 Assets', 'btn', () => openAssets()));
   actions.appendChild(button('Rename', 'btn', () => renameProjectDialog()));
   actions.appendChild(button('Duplicate', 'btn', () => duplicateProject()));
-  // Pack format is an export choice, so it lives next to the export button
-  // rather than in the project fields.
-  const fmtWrap = document.createElement('span');
-  fmtWrap.className = 'export-fmt';
-  const fmtInput = document.createElement('input');
-  fmtInput.type = 'number';
-  fmtInput.min = '1';
-  fmtInput.max = '999';
-  fmtInput.value = '15';
-  fmtInput.className = 'input export-fmt-input';
-  fmtInput.title = 'Resource pack format version (15 = 1.20.1)';
-  fmtWrap.appendChild(fmtInput);
-  actions.appendChild(fmtWrap);
-  actions.appendChild(button('Export pack', 'btn', () => exportPack(Number(fmtInput.value) || undefined)));
+  // Export opens a dialog, because the format and its options are choices, and
+  // a one-click export picks them silently. The version number in particular
+  // belongs to the pack format, not in the header of every project.
+  actions.appendChild(button('📦 Export', 'btn', () => exportDialog()));
   actions.appendChild(button('Delete', 'btn danger', () => deleteProject()));
 
   head.appendChild(headLeft);
@@ -330,10 +332,11 @@ function fact(value, label) {
   return wrap;
 }
 
-function button(text, cls, onclick) {
+function button(text, cls, onclick, title) {
   const b = document.createElement('button');
   b.className = cls;
   b.textContent = text;
+  if (title) b.title = title;
   if (onclick) b.onclick = onclick;
   return b;
 }
@@ -573,10 +576,165 @@ async function deleteProject() {
   await refresh();
 }
 
-function exportPack(packFormat) {
-  const params = new URLSearchParams({ format: 'pack' });
-  if (packFormat) params.set('pack_format', String(packFormat));
-  window.location.href = `/api/projects/${encodeURIComponent(state.activeSlug)}/export?${params}`;
+// ── export ──────────────────────────────────────────────────────────────────
+//
+// Two clicks, deliberately. The format and its options are choices, and a
+// one-click export makes them silently — which is how a resource pack gets
+// exported and then imported as a project bundle.
+//
+// The list is drawn from the server's export registry, so adding a format means
+// adding one entry to hikarin/export_formats.py. This file never names a format:
+// no dropdown to keep in sync, no `if (format === 'pack')` to update.
+
+function exportDialog() {
+  const formats = (state.exportFormats ?? []).filter((f) => f.scope === 'project');
+  if (!formats.length) return;
+
+  return new Promise((resolve) => {
+    const backdrop = $('export-dialog');
+    const titleEl = $('export-dialog-title');
+    const body = $('export-body');
+    const hint = $('export-hint');
+    const go = $('export-ok');
+    const errEl = $('export-error');
+
+    titleEl.textContent = `Export ${state.detail?.meta?.packName || state.activeSlug}`;
+    errEl.hidden = true;
+    errEl.textContent = '';
+
+    const selected = { id: formats[0].id };
+
+    body.innerHTML = '';
+
+    // Format list: one row per entry, radio-drawn so it reads as a choice
+    // rather than a filter.
+    for (const f of formats) {
+      const row = document.createElement('label');
+      row.className = 'export-option' + (f.id === selected.id ? ' active' : '');
+
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'export-format';
+      radio.value = f.id;
+      radio.checked = f.id === selected.id;
+      radio.onchange = () => {
+        selected.id = f.id;
+        for (const other of body.querySelectorAll('.export-option')) {
+          other.classList.toggle('active', other.querySelector('input').checked);
+        }
+        paint();
+      };
+
+      const text = document.createElement('span');
+      text.className = 'export-option-text';
+      const name = document.createElement('span');
+      name.className = 'export-option-name';
+      name.textContent = f.label;
+      const ext = document.createElement('span');
+      ext.className = 'export-option-ext';
+      ext.textContent = f.extension;
+      text.appendChild(name);
+      text.appendChild(ext);
+
+      row.appendChild(radio);
+      row.appendChild(text);
+      body.appendChild(row);
+    }
+
+    // Parameters, drawn from whatever the chosen format declares. A format that
+    // needs a version number or a name renders its own inputs.
+    const params = document.createElement('div');
+    params.className = 'export-params-box';
+    params.id = 'export-params';
+    body.appendChild(params);
+
+    function paint() {
+      const entry = formats.find((f) => f.id === selected.id);
+      hint.textContent = entry?.hint || '';
+      params.innerHTML = '';
+
+      for (const p of entry?.params ?? []) {
+        const label = document.createElement('label');
+        label.className = 'export-param';
+
+        const span = document.createElement('span');
+        span.className = 'export-param-label';
+        span.textContent = p.label || p.key;
+
+        let control;
+        if (p.type === 'select' && Array.isArray(p.options)) {
+          control = document.createElement('select');
+          control.className = 'select';
+          for (const o of p.options) {
+            const opt = document.createElement('option');
+            opt.value = o.value;
+            opt.textContent = o.label ?? o.value;
+            control.appendChild(opt);
+          }
+          control.value = p.default ?? p.options[0]?.value ?? '';
+        } else {
+          control = document.createElement('input');
+          control.className = 'input';
+          control.type = p.type === 'number' ? 'number' : 'text';
+          control.value = p.default ?? '';
+        }
+        control.dataset.key = p.key;
+        control.className += ' export-param-input';
+        if (p.hint) {
+          control.title = p.hint;
+          const ph = document.createElement('span');
+          ph.className = 'export-param-hint';
+          ph.textContent = p.hint;
+          label.appendChild(span);
+          label.appendChild(control);
+          label.appendChild(ph);
+          params.appendChild(label);
+          continue;
+        }
+        label.appendChild(span);
+        label.appendChild(control);
+        params.appendChild(label);
+      }
+
+      go.textContent = `Export ${entry?.extension || ''}`.trim();
+    }
+
+    const done = (value) => {
+      backdrop.hidden = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const submit = () => {
+      const search = new URLSearchParams({ format: selected.id });
+      for (const input of params.querySelectorAll('[data-key]')) {
+        if (input.value !== '') search.set(input.dataset.key, input.value);
+      }
+      window.location.href =
+        `/api/projects/${encodeURIComponent(state.activeSlug)}/export?${search}`;
+      done(selected.id);
+    };
+
+    const onKey = (e) => {
+      if (e.key === 'Escape') done(null);
+    };
+    const onClick = (e) => { if (e.target === backdrop) done(null); };
+    const cleanup = () => {
+      document.removeEventListener('keydown', onKey);
+      backdrop.removeEventListener('click', onClick);
+      go.onclick = null;
+      $('export-cancel').onclick = null;
+      $('export-close').onclick = null;
+    };
+
+    backdrop.hidden = false;
+    paint();
+    go.onclick = submit;
+    $('export-cancel').onclick = () => done(null);
+    $('export-close').onclick = () => done(null);
+    document.addEventListener('keydown', onKey);
+    backdrop.addEventListener('click', onClick);
+  });
 }
 
 // ── story actions ───────────────────────────────────────────────────────────
