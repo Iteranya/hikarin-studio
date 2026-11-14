@@ -389,13 +389,13 @@ def _to_action_command(d: dict) -> dict:
 
 
 def _to_action_play_level(d: dict) -> dict:
-    """Leave the VN and play a PvZ Fusion custom level, then come back.
+    """Leave the VN, play the named level, then come back.
 
-    This is a PvZ-Fusion extension, not a base action. The shipped
-    JSON keeps level names (human-readable, typo-checked) plus optional
-    resume labels. ``on_complete`` empty means fall through to the next
-    block; ``on_fail`` empty means the runtime decides (retry by default).
-    The PvZ runtime resolves ``level`` to Fusion's internal levelNumber.
+    The runtime decides what a "level" is — a scene, a map, a battle. The
+    shipped JSON keeps level names (human-readable, typo-checked) plus
+    optional resume labels. ``on_complete`` empty means fall through to the
+    next block; ``on_fail`` empty means the runtime decides (retry by
+    default).
     """
     action = {
         "type": "play_level",

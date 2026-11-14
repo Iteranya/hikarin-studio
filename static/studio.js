@@ -265,7 +265,7 @@ const TITLES = {
   clearBackground: 'Clear Background', label: 'Label', jump: 'Jump', if: 'If',
   next: 'Resume Point', end: 'End Scene', setVar: 'Set Variable', unlock: 'Unlock',
   giveItem: 'Give Item', takeItem: 'Take Item', music: 'Music', sound: 'Sound',
-  command: 'Command', playLevel: 'Play Level (PvZ)',
+  command: 'Command', playLevel: 'Play Level',
 };
 
 // Blocks the palette shows, in palette order. Not every engine action gets a
@@ -998,8 +998,8 @@ function fieldsFor(block) {
       break;
 
     case 'playLevel':
-      // PvZ Fusion extension: level is a name the PvZ runtime resolves to
-      // Fusion's levelNumber. Resume labels are regular global labels.
+      // A name the runtime resolves to whatever it calls a level. The
+      // resume labels are regular global labels.
       all.push(text('level', 'Level name', 'boss_fight_1', 'Custom level name to play, then resume the VN.'));
       all.push({ key: 'on_complete', label: 'On complete, go to', render: () => labelPicker(d, 'on_complete') });
       all.push({ key: 'on_fail', label: 'On fail, go to', render: () => labelPicker(d, 'on_fail') });
