@@ -20,6 +20,44 @@ blocks in the editor  ->  compile  ->  one JSON per character  ->  resource pack
 Because a pack can hold several characters, a project holds several stories, and
 the art is shared between them. More on that below.
 
+## Why this exists
+
+I work Monday to Saturday. My days off are Wednesday and Sunday. One work day is
+nine hours, and the commute takes four more, so thirteen hours gone before I have
+eaten anything.
+
+With that kind of week, how do I stay a game developer?
+
+By making an engine that runs on my phone.
+
+It is not really an engine — it needs a third-party runtime to actually play
+anything. But if all I want is to write a VN, a script, a story, then this is the
+part I can do on a train: no IDE, no build, no desktop. Just the editor, in a
+browser, on the thing already in my pocket.
+
+It still needs a VPS, so this is hyper-specific to my situation. Sue me.
+
+### On the AI question
+
+Yes, AI wrote a lot of this. No, I am not going to pretend otherwise.
+
+I did the math. The math says a purist's version of game development — the kind
+where you learn a renderer and write your own engine in a weekend — does not fit
+into thirteen-hour days with two days off. What fits is a tool that lets me keep
+making things at all.
+
+So: I would rather ship AI-assisted work than ship nothing. Not everyone has the
+luxury of time to follow their passion properly. Sue me. I double dare you.
+
+### What it is actually for
+
+Hikarin is designed to be **pure data and extremely modular**. The plan is to use
+it as the content pipeline for every interaction and VN-like cutscene across all
+my games, so that the games themselves stay data-driven. Think of DIY-ing your
+own RPG Maker.
+
+(Now that I say it out loud, RPG Maker works a lot like this. Fine. It's fine.)
+
 ## Run
 
 ```bash
@@ -326,6 +364,15 @@ re-renders from one source of truth instead of patching its own copy.
 ```bash
 uv run pytest -q
 ```
+
+## Colophon
+
+The technical README above was written by **Viel**, an AI assistant built by
+[Aktiva Institute](https://github.com/Iteranya/viel-ai). She has been used here
+for the same reason she is used everywhere else in this project: the author has
+thirteen-hour days and two days off, and the alternative was not shipping.
+
+If that bothers you, the Licence section is right below.
 
 ## Licence
 
