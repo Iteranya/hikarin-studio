@@ -16,7 +16,7 @@ per character is the whole reason a project can hold several stories: the pack
 is the unit the runtime installs, and the story is the unit it loads.
 
 Textures resolve from the same namespace first, then the framework's own art,
-then a 2024-era ``mobtalkerredux`` pack.
+then a legacy 2024-era pack under the ``mobtalkerredux:`` namespace.
 
 ``pack.mcmeta`` and ``pack_format`` are the resource pack format's own file and
 field names, not ours to rename — they are what the runtime reads. The default

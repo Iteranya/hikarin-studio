@@ -391,7 +391,7 @@ def _to_action_command(d: dict) -> dict:
 def _to_action_play_level(d: dict) -> dict:
     """Leave the VN and play a PvZ Fusion custom level, then come back.
 
-    This is a PvZ-Fusion extension, not a TLM action. The shipped
+    This is a PvZ-Fusion extension, not a base action. The shipped
     JSON keeps level names (human-readable, typo-checked) plus optional
     resume labels. ``on_complete`` empty means fall through to the next
     block; ``on_fail`` empty means the runtime decides (retry by default).

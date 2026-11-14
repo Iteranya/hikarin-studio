@@ -1,7 +1,7 @@
 # Hikarin script format — ground truth
 
 Everything the studio writes must compile to exactly this. It is what the
-runtime (`TLM: Visual Novel Framework`) reads.
+runtime reads.
 
 ## Shipped format
 
@@ -94,7 +94,8 @@ increments a bare variable across conversations still accumulates.
 
 ### The `local` and `@maid.` keyspaces are separate
 
-Bare names live in `TlmVnState.local`, `@maid.` values directly in `TlmVnState`.
+Bare names live in the runtime's per-character state, `@maid.` values directly
+in the character's own state.
 So `affection` and `@maid.affection` are two different variables and will not
 collide. This is deliberate: an explicit scope and a bare name should never
 overwrite each other by accident.

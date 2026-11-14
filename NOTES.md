@@ -27,7 +27,7 @@ Two different meanings for the same key name in the shipped format.
 
 The engine resolves a sprite by `location`, e.g.
 `characters/cupa/default/happy.png`, against `hikarin:textures/`, then the
-framework's own art, then `mobtalkerredux:`.
+framework's own art, then a legacy `mobtalkerredux:` namespace.
 
 Three levels, matching the SDK's `characters.py`: character, outfit, emotion.
 The outfit level is not optional — the 2024 mod never shipped outfit swapping,
