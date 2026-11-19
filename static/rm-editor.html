@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hikarin Studio — Resource Management</title>
+<link rel="stylesheet" href="studio.css">
+<link rel="stylesheet" href="rm-editor.css">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<meta name="theme-color" content="#14161a">
+</head>
+<body class="rm-body">
+
+<header class="topbar">
+  <a class="topbar-back" href="/manager">← Manager</a>
+  <div class="brand">
+    <span class="brand-mark">R</span>
+    <span class="brand-name">Resource Management</span>
+  </div>
+  <div class="project-info">
+    <span class="chip subtle" id="rm-project">—</span>
+  </div>
+  <div class="topbar-actions">
+    <span class="chip" id="rm-status">loading…</span>
+    <button class="btn" id="btn-validate" title="Compile-check the schema">✓ Validate</button>
+    <button class="btn" id="btn-export" title="Download resource_management.json + schema.json (no runtime code)">📦 Export kit</button>
+    <button class="btn primary" id="btn-save" title="Ctrl+S">Save</button>
+  </div>
+</header>
+
+<nav class="rm-tabs" id="rm-tabs" role="tablist">
+  <!-- filled by rm-editor.js -->
+</nav>
+<datalist id="rm-resource-ids"></datalist>
+<datalist id="rm-assignable-ids"></datalist>
+<datalist id="rm-tag-names"></datalist>
+<datalist id="rm-node-ids"></datalist>
+<datalist id="rm-event-ids"></datalist>
+<datalist id="rm-tech-ids"></datalist>
+<datalist id="rm-story-slugs"></datalist>
+
+<div class="rm-problems" id="rm-problems" hidden></div>
+
+<main class="rm-main">
+  <aside class="rm-side">
+    <div class="pane-head row">
+      <span id="rm-list-title">Resources</span>
+      <span class="spacer"></span>
+      <input type="text" class="input rm-search" id="rm-search" placeholder="Filter…" autocomplete="off">
+      <button class="btn tiny" id="rm-add">+ Add</button>
+    </div>
+    <div class="rm-list" id="rm-list"></div>
+    <div class="rm-side-foot">
+      <span id="rm-counts"></span>
+    </div>
+  </aside>
+
+  <section class="rm-editor">
+    <div class="rm-form" id="rm-form"></div>
+  </section>
+</main>
+
+<script type="module" src="rm-editor.js"></script>
+</body>
+</html>

@@ -169,6 +169,35 @@ Declaring is a convenience for the editor, not state the engine reads. A story
 using an undeclared global still compiles. Removing a declaration never touches
 the blocks that reference it.
 
+## Resource management designer
+
+The manager has a **🧩 Resource Management** button per project. It opens
+`/rm-editor?project=<slug>`, a designer for the game's economy as *data*:
+currencies (**Resources**), things that produce them (**Generators**), things
+that transform them (**Converters** + recipes), map points (**Nodes**: expeditions,
+encounters, story beats — with requirements, rewards, event pools and progression
+edges), unlocks (**Tech Tree**), random outcomes (**Events**), and the workers you
+plug into slots (**Assignables**, tagged — tags drive the assignment bonuses).
+
+Everything is written to `resource_management.json` next to `variables.json`.
+There is no runtime and no dependency: the designer is a content pipeline that
+produces a schema, and whatever engine you feed it to interprets the primitives.
+**Export → Resource management kit** downloads the schema plus its JSON Schema
+and nothing else.
+
+One seam joins the two worlds: a Resource flagged **Visible to the VN** is the
+*same variable* everywhere. The designer syncs it into the variables registry as
+a declared global under its VN name (GLOBAL scope compiles to the engine's
+`WORLD`), so the story editor offers it in conditionals and setVar blocks like
+any hand-registered variable. Sync runs on every save: delete the resource or
+uncheck the box and the variable is gone from the registry; hand-registered
+variables are never touched. A name that collides with a hand-registered
+variable refuses the save — the failure mode of silently shadowing one is the
+exact trap the registry exists to prevent.
+
+Engines that want to verify the wiring can consume `schema.json` from the export
+kit, or validate `resource_management.json` against it directly.
+
 ## Projects and stories
 
 `/manager` is the front door. It lists projects, shows the stories inside one,
@@ -386,6 +415,13 @@ POST   /api/projects/import-zip?slug=...          (body: .hikarin.zip bundle)
 
 GET    /api/projects/{slug}/variables             declared global variables
 PUT    /api/projects/{slug}/variables             replace them (validated first)
+
+GET    /api/projects/{slug}/resource-management            the RM schema + problems + summary
+PUT    /api/projects/{slug}/resource-management            validate, write, sync VN variables
+POST   /api/projects/{slug}/resource-management/validate   validate without writing
+
+# resource-management export uses the project export route:
+GET    /api/projects/{slug}/export?format=rmkit               data-only kit (schema.json + JSON Schema)
 
 GET    /api/projects/{slug}/stories               list stories
 POST   /api/projects/{slug}/stories               {"slug": "...", "meta": {...}}

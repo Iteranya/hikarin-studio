@@ -27,7 +27,9 @@ from pydantic import BaseModel, Field
 from hikarin import assets as asset_store
 from hikarin import blocks as block_defs
 from hikarin import projects as project_store
+from hikarin import resource_management as rm_store
 from hikarin import variables as variable_store
+from hikarin.rm_schema import ResourceManagementSchema
 from hikarin.compiler import CompileResult, compile_project
 from hikarin.exporter import (
     build_hikarin,
@@ -40,6 +42,7 @@ from hikarin.exporter import (
     story_filename,
 )
 from hikarin.export_formats import EXPORT_FORMATS, defaults, get_format, public_formats
+from hikarin.rm_exporter import build_rmkit
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -93,6 +96,12 @@ class VariablesRequest(BaseModel):
     """A whole-registry write: the manager holds the list and sends it back."""
 
     variables: list[dict] = Field(default_factory=list)
+
+
+class ResourceManagementRequest(BaseModel):
+    """The full RM schema, as edited in the RM designer."""
+
+    data: dict = Field(default_factory=dict)
 
 
 class NewCharacterRequest(BaseModel):
@@ -240,6 +249,72 @@ def put_variables(slug: str, req: VariablesRequest):
     except variable_store.VariableError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"variables": saved}
+
+
+# ── resource management ─────────────────────────────────────────────────────
+#
+# The designer for the game's economy: currencies, generators, converters,
+# expeditions, tech trees, assignments. Everything is data; nothing here is VN
+# logic. VN-visible resources are synced into the variables registry on save,
+# so the story editor sees them as ordinary globals — the one seam between the
+# two systems.
+
+
+@app.get("/api/projects/{slug}/resource-management")
+def get_rm(slug: str):
+    _project_or_404(project_store.project_dir, slug)
+    try:
+        schema = rm_store.load_rm(project_store.project_dir(slug))
+    except rm_store.ResourceManagementError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    problems = rm_store.validate_rm(schema, project_store.project_dir(slug))
+    return {
+        "schema": schema.model_dump(mode="json"),
+        "problems": problems,
+        "summary": rm_store.schema_summary(schema),
+    }
+
+
+@app.put("/api/projects/{slug}/resource-management")
+def put_rm(slug: str, req: ResourceManagementRequest):
+    """Validate and write the whole RM schema, then sync VN variables.
+
+    Hard errors refuse the write entirely — the file on disk stays as it was.
+    Warnings are returned for display. The sync drops RM-derived VN variables
+    that no longer exist and registers newly visible ones; hand-registered
+    variables are never touched.
+    """
+    _project_or_404(project_store.project_dir, slug)
+    try:
+        schema = ResourceManagementSchema.model_validate(req.data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        schema, warnings = rm_store.save_rm(project_store.project_dir(slug), schema)
+    except rm_store.ResourceManagementError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {
+        "schema": schema.model_dump(mode="json"),
+        "problems": warnings,
+        "summary": rm_store.schema_summary(schema),
+    }
+
+
+@app.post("/api/projects/{slug}/resource-management/validate")
+def validate_rm(slug: str, req: ResourceManagementRequest):
+    """Validate a schema without writing it. What the designer's ✓ means."""
+    _project_or_404(project_store.project_dir, slug)
+    try:
+        schema = ResourceManagementSchema.model_validate(req.data)
+    except ValueError as e:
+        return {"ok": False, "problems": [str(e)], "summary": None}
+    problems = rm_store.validate_rm(schema, project_store.project_dir(slug))
+    hard = [p for p in problems if "(warning)" not in p]
+    return {
+        "ok": not hard,
+        "problems": problems,
+        "summary": rm_store.schema_summary(schema),
+    }
 
 
 # ── stories ─────────────────────────────────────────────────────────────────
@@ -571,6 +646,14 @@ def export_project(slug: str, format: str = "pack", pack_format: int | None = No
             media = "application/zip"
             filename = export_filename_for(project["meta"], "bundle")
 
+        elif fmt == "rmkit":
+            # Data only: the resource management schema plus its JSON Schema.
+            payload = build_rmkit(project_store.project_dir(slug))
+            media = "application/zip"
+            filename = export_filename_for(project["meta"], "bundle").replace(
+                ".hikarin.zip", ".rmkit.zip"
+            )
+
         elif fmt == "story-json":
             story = _require_story_param(project)
             loaded = project_store.load_story(slug, story)
@@ -582,7 +665,7 @@ def export_project(slug: str, format: str = "pack", pack_format: int | None = No
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown export format: {format!r} (pack|bundle|story-json)",
+                detail=f"Unknown export format: {format!r} (pack|bundle|story-json|rmkit)",
             )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -664,6 +747,12 @@ def index():
 def editor():
     """The story editor. Always reached with ?project=...&story=... ."""
     return FileResponse(STATIC / "index.html", headers=NO_CACHE)
+
+
+@app.get("/rm-editor")
+def rm_editor():
+    """The resource management designer. ?project=<slug>."""
+    return FileResponse(STATIC / "rm-editor.html", headers=NO_CACHE)
 
 
 @app.get("/manager")

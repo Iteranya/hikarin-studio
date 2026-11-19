@@ -159,6 +159,11 @@ function renderDetail() {
   const actions = document.createElement('div');
   actions.className = 'detail-actions';
   actions.appendChild(button('🎨 Assets', 'btn', () => openAssets()));
+  actions.appendChild(
+    button('🧩 Resource Management', 'btn', () => {
+      window.location.href = `/rm-editor?project=${encodeURIComponent(slug)}`;
+    })
+  );
   actions.appendChild(button('Rename', 'btn', () => renameProjectDialog()));
   actions.appendChild(button('Duplicate', 'btn', () => duplicateProject()));
   // Export opens a dialog, because the format and its options are choices, and
