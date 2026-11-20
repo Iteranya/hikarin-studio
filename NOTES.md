@@ -34,3 +34,25 @@ The outfit level is not optional — the 2024 mod never shipped outfit swapping,
 but the SDK author added it as groundwork so scripts would not need rewriting
 later. Skipping it here would have meant migrating every sprite reference once
 outfits landed, so the studio emits it from day one.
+
+## RM-derived VN variables carry `source: "rm"`
+
+Resources flagged visible_to_vn are synced into `variables.json` on every RM
+save, tagged `"source": "rm"`. `hikarin.variables.load_variables` drops unknown
+keys when it rewrites the file, so RM syncs read the raw JSON instead — never
+round-trip the registry through `load_variables`/`save_variables` if you need to
+tell RM-derived entries from hand-registered ones.
+
+Sync rules: RM-derived entries are replaced wholesale; hand-registered ones are
+never touched; a VN name colliding with a hand-registered variable is a hard
+error that refuses the save. The registry is append-only for humans, replace-set
+for the RM editor.
+
+## Unreachable reachability is a heuristic, not a proof
+
+`rm_schema.validate_schema` seeds reachability from requirement-free nodes and
+propagates outward (tech unlocks, effect targets, generator level unlocks, node
+`connects_to`). A node *gated behind* a requirement but unlocked by another
+node's completion still shows as unreachable when nothing references it — treat
+the warning as "did you forget to wire this up?", not as a hard failure. It is
+tagged `(warning)` and never blocks save or export.

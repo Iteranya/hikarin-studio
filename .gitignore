@@ -9,5 +9,6 @@ uv.lock.bak
 projects/*/
 !projects/.gitkeep
 
-# Local run log
-server.log
+# Local run logs
+*.log
+*.err.log

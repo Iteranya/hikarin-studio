@@ -67,6 +67,14 @@ EXPORT_FORMATS: list[dict[str, Any]] = [
         ],
     },
     {
+        "id": "rmkit",
+        "label": "Resource management kit",
+        "extension": ".rmkit.zip",
+        "scope": "project",
+        "hint": "Data only: the designed resource management schema plus its JSON Schema. No runtime code — feed it to whatever engine you build.",
+        "params": [],
+    },
+    {
         "id": "bundle",
         "label": "Project bundle",
         "extension": ".hikarin.zip",
