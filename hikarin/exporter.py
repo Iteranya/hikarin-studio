@@ -54,15 +54,22 @@ IMAGE_EXT = (".png", ".jpg", ".jpeg")
 SOUND_EXT = (".ogg", ".wav", ".mp3")
 
 
-def story_filename(story_meta: dict) -> str:
+def story_filename(story_meta: dict, slug: str | None = None, disambiguate: bool = False) -> str:
     """The JSON file name inside the pack for one story.
 
     This is the engine's trigger — the story's name, lowercased, spaces to
     underscores. It is also what the author sees in the story list, so it has to
     be predictable rather than clever.
+
+    If ``disambiguate`` is true (multiple stories share the same character),
+    append the slug to make the filename unique.
     """
     raw = (story_meta.get("character") or story_meta.get("slug") or "story").strip()
-    return raw.lower().replace(" ", "_")
+    base = raw.lower().replace(" ", "_")
+    if disambiguate and slug:
+        # slug is already a valid filename; join with underscore
+        return f"{base}_{slug}"
+    return base
 
 
 def build_pack(
@@ -102,6 +109,15 @@ def build_pack(
     if pack_format is None:
         pack_format = DEFAULT_PACK_FORMAT
 
+    # Count how many stories share each character (the trigger name).
+    # If a character appears more than once, we disambiguate filenames by
+    # appending the slug so multiple scripts for the same character don't
+    # overwrite each other in the zip.
+    char_counts: dict[str, int] = {}
+    for _slug, (story_meta, _result) in stories.items():
+        char = (story_meta.get("character") or story_meta.get("slug") or "story").strip().lower().replace(" ", "_")
+        char_counts[char] = char_counts.get(char, 0) + 1
+
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         # pack.mcmeta — the format's own manifest: it tells the runtime this
@@ -120,11 +136,13 @@ def build_pack(
         if icon.is_file():
             zf.write(icon, "pack.png")
 
-        # One JSON per story. Two stories claiming the same trigger would
-        # silently overwrite each other inside the zip, so refuse instead.
+        # One JSON per story. If multiple stories share a character,
+        # disambiguate by appending the slug.
         written: dict[str, str] = {}
         for slug, (story_meta, result) in stories.items():
-            filename = story_filename(story_meta)
+            char = (story_meta.get("character") or story_meta.get("slug") or "story").strip().lower().replace(" ", "_")
+            disambiguate = char_counts.get(char, 0) > 1
+            filename = story_filename(story_meta, slug=slug, disambiguate=disambiguate)
             if filename in written:
                 raise ValueError(
                     f'Stories "{written[filename]}" and "{slug}" both compile to '
@@ -199,20 +217,30 @@ def build_hikarin(
     if not stories:
         raise ValueError("Cannot export: this project has no stories.")
 
+    # Count how many stories share each character (the trigger name).
+    # If a character appears more than once, we disambiguate filenames by
+    # appending the slug so multiple scripts for the same character don't
+    # overwrite each other in the zip.
+    char_counts: dict[str, int] = {}
+    for _slug, (story_meta, _result) in stories.items():
+        char = (story_meta.get("character") or story_meta.get("slug") or "story").strip().lower().replace(" ", "_")
+        char_counts[char] = char_counts.get(char, 0) + 1
+
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         scripts: list[dict[str, Any]] = []
         seen: dict[str, str] = {}
 
         for slug, (story_meta, result) in stories.items():
-            filename = story_filename(story_meta)
+            char = (story_meta.get("character") or story_meta.get("slug") or "story").strip().lower().replace(" ", "_")
+            disambiguate = char_counts.get(char, 0) > 1
+            filename = story_filename(story_meta, slug=slug, disambiguate=disambiguate)
             if filename in seen:
                 raise ValueError(
                     f'Stories "{seen[filename]}" and "{slug}" both compile to '
                     f"{filename}.json. Give each story its own character name."
                 )
             seen[filename] = slug
-
             zf.writestr(
                 f"{filename}.json",
                 json.dumps(result.actions, indent=2, ensure_ascii=False),
@@ -269,6 +297,7 @@ def export_filename(meta: dict) -> str:
 
 
 # ── extra export formats ────────────────────────────────────────────────────
+
 
 EXPORT_FORMATS = ("pack", "hikarin", "json", "txt", "md", "bundle")
 
@@ -452,6 +481,7 @@ def build_project_bundle(meta, stories, project_path: Path) -> bytes:
                 for f in sorted(root.rglob("*")):
                     if f.is_file():
                         zf.write(f, f.relative_to(project_path).as_posix())
+
     return buffer.getvalue()
 
 

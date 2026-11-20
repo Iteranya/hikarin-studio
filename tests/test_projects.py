@@ -360,7 +360,7 @@ def test_hikarin_bundle_has_no_resource_pack_layout(pack, temp_root):
 
 
 def test_hikarin_export_rejects_a_duplicate_trigger(pack):
-    """Two stories claiming one file name would overwrite in the zip."""
+    """Two stories with same character now disambiguate by appending slug."""
     meta = store.load_project(pack)["meta"]
     files = {"main.story": [{"kind": "label", "data": {"name": "start"}}]}
     store.save_story(pack, "cupa", {"character": "same"}, files)
@@ -370,8 +370,22 @@ def test_hikarin_export_rejects_a_duplicate_trigger(pack):
         "cupa": ({"character": "same"}, compile_project({"character": "same"}, files)),
         "reimu": ({"character": "same"}, compile_project({"character": "same"}, files)),
     }
-    with pytest.raises(ValueError):
-        build_hikarin(meta, stories, store.project_dir(pack))
+    data = build_hikarin(meta, stories, store.project_dir(pack))
+
+    # Verify the zip contains both files with disambiguated names
+    import zipfile
+    import io
+    zf = zipfile.ZipFile(io.BytesIO(data))
+    names = zf.namelist()
+    # Should have both: same_cupa.json and same_reimu.json (plus manifest, images/, sounds/)
+    assert "same_cupa.json" in names
+    assert "same_reimu.json" in names
+    assert "same.json" not in names  # no collision
+    # manifest should reference the disambiguated files
+    manifest = json.loads(zf.read("manifest.json"))
+    script_files = [s["file"] for s in manifest["scripts"]]
+    assert "same_cupa.json" in script_files
+    assert "same_reimu.json" in script_files
 
 
 def test_export_refuses_empty_project(temp_root):
@@ -396,7 +410,7 @@ def test_export_refuses_broken_story(temp_root):
 
 
 def test_export_refuses_two_stories_with_one_trigger(pack):
-    """Two stories compiling to the same file name would overwrite in the zip."""
+    """Two stories with same character now disambiguate by appending slug."""
     meta = store.load_project(pack)["meta"]
     files = {"main.story": [{"kind": "label", "data": {"name": "start"}}]}
 
@@ -408,8 +422,17 @@ def test_export_refuses_two_stories_with_one_trigger(pack):
         "cupa": ({"character": "same"}, compile_project({"character": "same"}, files)),
         "reimu": ({"character": "same"}, compile_project({"character": "same"}, files)),
     }
-    with pytest.raises(ValueError):
-        build_pack(meta, stories, store.project_dir(pack))
+    data = build_pack(meta, stories, store.project_dir(pack))
+
+    # Verify the zip contains both files with disambiguated names
+    import zipfile
+    import io
+    zf = zipfile.ZipFile(io.BytesIO(data))
+    names = zf.namelist()
+    # Should have both: same_cupa.json and same_reimu.json under assets/hikarin/
+    assert "assets/hikarin/same_cupa.json" in names
+    assert "assets/hikarin/same_reimu.json" in names
+    assert "assets/hikarin/same.json" not in names  # no collision
 
 
 def test_story_filename_is_the_trigger():
