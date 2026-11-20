@@ -248,15 +248,15 @@ function renderStories(root, slug, stories) {
       group.className = 'story-group';
 
       const groupHead = document.createElement('div');
-      groupHead.className = 'story-group-head';
-      groupHead.tabIndex = 0;
-      groupHead.role = 'button';
-      groupHead.setAttribute('aria-expanded', 'true');
+            groupHead.className = 'story-group-head';
+            groupHead.tabIndex = 0;
+            groupHead.role = 'button';
+            groupHead.setAttribute('aria-expanded', 'false');
 
-      const toggle = document.createElement('span');
-      toggle.className = 'story-group-toggle';
-      toggle.textContent = '▼';
-      toggle.setAttribute('aria-hidden', 'true');
+            const toggle = document.createElement('span');
+            toggle.className = 'story-group-toggle';
+            toggle.textContent = '▶';
+            toggle.setAttribute('aria-hidden', 'true');
       groupHead.appendChild(toggle);
 
       const label = document.createElement('span');
@@ -273,19 +273,21 @@ function renderStories(root, slug, stories) {
       }
 
       const groupList = document.createElement('div');
-      groupList.className = 'story-group-list';
-      for (const s of groupStories) {
-        groupList.appendChild(storyCard(s));
-      }
+            groupList.className = 'story-group-list';
+            // Start collapsed
+            groupList.style.display = 'none';
+            for (const s of groupStories) {
+              groupList.appendChild(storyCard(s));
+            }
 
-      // Collapsible behavior
-      let expanded = true;
-      const toggleGroup = () => {
-        expanded = !expanded;
-        groupList.style.display = expanded ? 'flex' : 'none';
-        groupHead.setAttribute('aria-expanded', expanded);
-        toggle.textContent = expanded ? '▼' : '▶';
-      };
+            // Collapsible behavior
+            let expanded = false;
+            const toggleGroup = () => {
+              expanded = !expanded;
+              groupList.style.display = expanded ? 'flex' : 'none';
+              groupHead.setAttribute('aria-expanded', expanded);
+              toggle.textContent = expanded ? '▼' : '▶';
+            };
       groupHead.onclick = (e) => {
         if (e.target.closest('.story-group-count')) return;
         toggleGroup();
