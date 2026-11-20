@@ -95,7 +95,7 @@ function renderList() {
   if (state.projects.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'manager-empty-note';
-    empty.textContent = 'No projects yet. Press “New project” to start one.';
+    empty.textContent = 'No projects yet. Press "New project" to start one.';
     list.appendChild(empty);
     $('project-total').textContent = '0 projects';
     return;
@@ -207,7 +207,7 @@ function renderDetail() {
   const note = document.createElement('div');
   note.className = 'manager-empty-note';
   note.innerHTML =
-    '<b>Project</b> = the pack the runtime installs. <b>Story</b> = one story’s script inside it. ' +
+    '<b>Project</b> = the pack the runtime installs. <b>Story</b> = one story\'s script inside it. ' +
     'Art in <code>images/</code> and <code>sounds/</code> is shared by every story. ' +
     'Labels are scoped to a story: a Jump can cross <code>.story</code> files, never stories.';
   root.appendChild(note);
@@ -230,7 +230,7 @@ function renderStories(root, slug, stories) {
     const note = document.createElement('div');
     note.className = 'manager-empty-note';
     note.innerHTML =
-      'This project has no stories yet. A story is one story’s script — add one to start writing.';
+      'This project has no stories yet. A story is one story\'s script — add one to start writing.';
     list.appendChild(note);
   }
 
@@ -779,7 +779,7 @@ async function duplicateStory(storySlug) {
 async function deleteStory(storySlug) {
   const ok = await confirmDialog(
     'Delete story?',
-    `This removes the story “${storySlug}” — its .story files and every block in them. ` +
+    `This removes the story "${storySlug}" — its .story files and every block in them. ` +
       `Shared images and sounds stay. This cannot be undone.`,
     'Delete story'
   );
@@ -940,9 +940,13 @@ function createStoryDialog() {
     const slugEl = $('sf-slug');
     const errEl = $('sf-error');
 
+    // User has taken over the slug field (stopped auto-mirroring).
+    // Using a flag instead of the input's readOnly attribute, because
+    // readOnly is a browser UI state, not our logical state.
+    let slugUserEdited = false;
+
     charEl.value = '';
     slugEl.value = '';
-    slugEl.readOnly = true;          // follows the character until edited
     errEl.hidden = true;
     errEl.textContent = '';
     backdrop.hidden = false;
@@ -991,34 +995,31 @@ function createStoryDialog() {
       $('story-dialog-ok').onclick = null;
       $('story-dialog-cancel').onclick = null;
       $('story-dialog-close').onclick = null;
-      // These two live on the slug field, which is shared with the rename
-      // dialog. Leaving them attached is what froze the story-name field:
-      // the next rename typed one character and this oninput flipped the
-      // field back to readOnly. Clear every handler this dialog set.
+      // Handlers we attached to the shared fields — clear them so the
+      // next dialog (rename) starts fresh.
       charEl.oninput = null;
       slugEl.oninput = null;
       slugEl.onfocus = null;
     };
 
     // The story name mirrors the character until the author takes it over —
-        // the common case is one folder per story, and making them type it twice is
-        // a pointless chore.
-        charEl.oninput = () => {
-          if (!slugEl.readOnly) return;
-          slugEl.value = charEl.value.trim().toLowerCase().replace(/\s+/g, '_');
-        };
-        // User typing in the slug means they're taking over; keep it editable
-        // (the charEl.oninput above already stops mirroring when slug is editable).
-        slugEl.oninput = () => { slugEl.readOnly = false; };
-        slugEl.onfocus = () => { slugEl.readOnly = false; };
+    // the common case is one folder per story, and making them type it twice is
+    // a pointless chore.
+    charEl.oninput = () => {
+      if (slugUserEdited) return;
+      slugEl.value = charEl.value.trim().toLowerCase().replace(/\s+/g, '_');
+    };
+    // User typing in or focusing the slug means they're taking over.
+    slugEl.oninput = () => { slugUserEdited = true; };
+    slugEl.onfocus = () => { slugUserEdited = true; };
 
-        $('story-dialog-ok').onclick = submit;
-        $('story-dialog-cancel').onclick = () => done(null);
-        $('story-dialog-close').onclick = () => done(null);
-        document.addEventListener('keydown', onKey);
-        backdrop.addEventListener('click', onClick);
-      });
-    }
+    $('story-dialog-ok').onclick = submit;
+    $('story-dialog-cancel').onclick = () => done(null);
+    $('story-dialog-close').onclick = () => done(null);
+    document.addEventListener('keydown', onKey);
+    backdrop.addEventListener('click', onClick);
+  });
+}
 
 function renameStoryDialog(storySlug) {
   return new Promise((resolve) => {
@@ -1027,15 +1028,16 @@ function renameStoryDialog(storySlug) {
     const slugEl = $('sf-slug');
     const errEl = $('sf-error');
 
+    let slugUserEdited = false;
+
     const existing = state.detail?.stories?.find((x) => x.slug === storySlug);
 
     $('story-dialog-title').textContent = 'Rename story';
     $('story-dialog-ok').textContent = 'Rename';
     charEl.value = existing?.character || storySlug;
     slugEl.value = storySlug;
-    slugEl.readOnly = true;
-    // The New story dialog leaves an oninput on this shared field that flips
-    // it back to readOnly after one keystroke. Clear it so a rename can type.
+    // The New story dialog leaves an oninput on this shared field.
+    // Clear it so a rename starts fresh.
     slugEl.oninput = null;
     errEl.hidden = true;
     errEl.textContent = '';
@@ -1067,7 +1069,9 @@ function renameStoryDialog(storySlug) {
         // was just the folder name; a deliberate character name is left alone.
         if (newSlug !== storySlug || character !== (existing?.character || storySlug)) {
           const res = await fetch(
-            `/api/projects/${encodeURIComponent(state.activeSlug)}/stories/${encodeURIComponent(storySlug)}/rename`,
+            `/api/projects/${encodeURIComponent(state.activeSlug)}/stories/${encodeURIComponent(
+              storySlug
+            )}/rename`,
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1101,14 +1105,16 @@ function renameStoryDialog(storySlug) {
       $('story-dialog-cancel').onclick = null;
       $('story-dialog-close').onclick = null;
       $('story-dialog-ok').textContent = 'Create';
-      // Same shared-field rule as the New story dialog: leave no handler behind
-      // on the slug/character inputs for the next dialog to trip over.
+      // Same shared-field rule: leave no handler behind for the next dialog.
       charEl.oninput = null;
       slugEl.oninput = null;
       slugEl.onfocus = null;
     };
 
-    slugEl.onfocus = () => { slugEl.readOnly = false; };
+    // In rename, the slug is editable from the start — user owns it immediately.
+    slugUserEdited = true;
+    slugEl.onfocus = () => { slugUserEdited = true; };
+
     $('story-dialog-ok').onclick = submit;
     $('story-dialog-cancel').onclick = () => done(null);
     $('story-dialog-close').onclick = () => done(null);
