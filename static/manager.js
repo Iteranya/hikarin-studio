@@ -991,7 +991,13 @@ function createStoryDialog() {
       $('story-dialog-ok').onclick = null;
       $('story-dialog-cancel').onclick = null;
       $('story-dialog-close').onclick = null;
+      // These two live on the slug field, which is shared with the rename
+      // dialog. Leaving them attached is what froze the story-name field:
+      // the next rename typed one character and this oninput flipped the
+      // field back to readOnly. Clear every handler this dialog set.
       charEl.oninput = null;
+      slugEl.oninput = null;
+      slugEl.onfocus = null;
     };
 
     // The story name mirrors the character until the author takes it over —
@@ -1026,6 +1032,9 @@ function renameStoryDialog(storySlug) {
     charEl.value = existing?.character || storySlug;
     slugEl.value = storySlug;
     slugEl.readOnly = true;
+    // The New story dialog leaves an oninput on this shared field that flips
+    // it back to readOnly after one keystroke. Clear it so a rename can type.
+    slugEl.oninput = null;
     errEl.hidden = true;
     errEl.textContent = '';
     backdrop.hidden = false;
@@ -1090,6 +1099,11 @@ function renameStoryDialog(storySlug) {
       $('story-dialog-cancel').onclick = null;
       $('story-dialog-close').onclick = null;
       $('story-dialog-ok').textContent = 'Create';
+      // Same shared-field rule as the New story dialog: leave no handler behind
+      // on the slug/character inputs for the next dialog to trip over.
+      charEl.oninput = null;
+      slugEl.oninput = null;
+      slugEl.onfocus = null;
     };
 
     slugEl.onfocus = () => { slugEl.readOnly = false; };
