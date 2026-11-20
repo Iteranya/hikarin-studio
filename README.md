@@ -1,32 +1,24 @@
 # Hikarin Studio
 
-A visual editor for branching dialogue scripts.
+**A data-authoring pipeline for data-driven games. No runtime, no lock-in, no build step.**
 
-You write a scene as a stack of blocks — someone speaks, a sprite appears, a
-choice is offered, a flag is set — and the studio compiles it into the flat JSON
-a visual novel runtime loads. No scripting language, no line numbers, no
-hand-written ids: every reference is a label name, so you can reorder freely and
-the compiler resolves it.
+You don't build a game here. You describe one — as data — and Hikarin compiles that
+description into a shape some engine goes and runs.
 
-It is a content pipeline, not a game engine. It does not run the story; it
-produces files something else runs.
+Hikarin is not an engine and never wants to be one. It is the *authoring layer*: a
+small local web app where you write the world as data (dialogue, economies, quests,
+whatever the next domain turns out to be), validate it, and export a clean contract
+that Godot / your own runtime / a mod loader interprets. Hikarin hands off the data;
+it never runs the game. That one decision is what keeps it small, portable, and
+hostable on a phone.
 
 ```
-blocks in the editor  ->  compile  ->  one JSON per character  ->  a folder
+author as data  →  validate  →  export a contract  →  [ some engine runs it ]
+   (Hikarin)                                        (not Hikarin)
 ```
 
-That folder is the deliverable, and it comes in two shapes. **Hikarin** is the
-format this project is named after: a `manifest.json`, one script per story at the
-root, and `images/` and `sounds/` exactly as you authored them. **Resource pack**
-is the same content arranged for one runtime's loader — a `pack.mcmeta`, an
-`assets/hikarin/` prefix, and a `textures/` rename. Same scripts, different
-packaging convention.
-
-Reach for Hikarin unless you are specifically feeding a resource pack loader. It
-is the neutral one.
-
-A project can hold several characters, so it holds several stories, and the art is
-shared between them. More on that below.
+That pipeline is the whole thesis. Everything below is just what it looks like in
+practice.
 
 ## Why this exists
 
@@ -70,18 +62,59 @@ you might remember viel? Yeah, same girl, from https://github.com/Iteranya/viel-
 
 Anyway, Viel, your turn
 
+---
+
 ## What this actually is, technically
 
 Alright, my turn.
 
-Hikarin Studio is a small local web app. FastAPI on the back, vanilla JS on the
-front, no build step, no database, no accounts. A project is a folder on disk and
-the editor is static files. That is the whole deployment story.
+Hikarin Studio is a small local web app. FastAPI on the back, vanilla JS on the front,
+no build step, no database, no accounts. A project is a folder on disk and the editor
+is static files. That is the whole deployment story.
 
-The important architectural fact is the one that made the rest cheap: **the
-compiler never learned about projects.** It takes a meta dict and a
-`{file: blocks}` dict, and that is exactly one story's worth of data. When the
-model grew a level, the compiler did not notice.
+But the real idea — the thing that makes "data-driven goodness" more than a sticker —
+is that **Hikarin is a host for domain designers, and every domain is the same three
+verbs.**
+
+```
+author as data  →  validate  →  export a contract
+```
+
+- **Author as data** — you fill in a designer, not a code file. No hand-written JSON,
+  no ids, no line numbers.
+- **Validate** — Hikarin checks the data for meaning (dangling references, unreachable
+  nodes, name collisions) before it lets you export, so the failure is caught at
+  author time, not 3am in-engine.
+- **Export a contract** — you get a schema (and, where it makes sense, compiled output)
+  that *some other program* interprets. Hikarin ships no runtime and has no opinion
+  about how a generator ticks or a jump arc feels.
+
+Two domains exist today, and they're deliberately different *kinds* of thing:
+
+| domain | what it authors | what it exports |
+|---|---|---|
+| **Story** (domain #1) | branching dialogue — one character's script as blocks | compiled JSON actions a VN runtime loads |
+| **Resource Management** (domain #2) | the game's economy — resources, generators, converters, nodes, tech, events, workers | a data-only kit: `schema.json` + JSON Schema, no runtime |
+
+The **Story** compiler is the mature one — the original reason Hikarin exists, and the
+one with the sharpest edges filed off. The **Resource Management** designer is the
+first proof that the pattern generalizes: it's not "a feature bolted on," it's domain
+#2 walking through the exact same `author → validate → export` door. The next domain
+(quest graphs, inventories, whatever) is more of the same, not a new architecture.
+
+The important architectural fact underneath all of it: **the Story compiler never
+learned about projects.** It takes a meta dict and a `{file: blocks}` dict, and that is
+exactly one story's worth of data. When the model grew a level, the compiler did not
+notice. The same "the core is dumb about where its data came from" trick is what lets a
+second domain sit beside the first without either one knowing about the other.
+
+And the part I'll keep shouting until I'm hoarse: **no runtime, on purpose.**
+"Data-first" only works if the tool doesn't also try to *be* the game. The moment
+Hikarin has opinions about how a thing executes in real time, it stops being the neutral
+authoring layer and starts competing with the engines it's supposed to feed. So it
+doesn't. Feel — jump arcs, combat timing, input latency — lives on the runtime side,
+forever, and that's correct. Hikarin owns the world and the rules *as data*; the game
+decides how to run them.
 
 ## Run it
 
@@ -103,7 +136,7 @@ module cache can keep serving stale routes after a backend edit, which reads as
 single-process local tool the reloader buys nothing and costs you an afternoon
 once a month.
 
-## The model
+## The model (Story domain)
 
 Three levels. The distinction is the design.
 
@@ -111,6 +144,7 @@ Three levels. The distinction is the design.
 projects/<project>/          a project = one pack
   project.json               pack name, description
   variables.json             declared global variables
+  resource_management.json   the economy (RM domain; see below)
   stories/
     <story>/                 a story = one character's script
       story.json             character (the trigger), start label, file order
@@ -169,34 +203,65 @@ Declaring is a convenience for the editor, not state the engine reads. A story
 using an undeclared global still compiles. Removing a declaration never touches
 the blocks that reference it.
 
-## Resource management designer
+## Resource Management domain (domain #2)
 
 The manager has a **🧩 Resource Management** button per project. It opens
-`/rm-editor?project=<slug>`, a designer for the game's economy as *data*:
-currencies (**Resources**), things that produce them (**Generators**), things
-that transform them (**Converters** + recipes), map points (**Nodes**: expeditions,
-encounters, story beats — with requirements, rewards, event pools and progression
-edges), unlocks (**Tech Tree**), random outcomes (**Events**), and the workers you
-plug into slots (**Assignables**, tagged — tags drive the assignment bonuses).
+`/rm-editor?project=<slug>`, a designer for the game's economy as *data*.
 
-Everything is written to `resource_management.json` next to `variables.json`.
-There is no runtime and no dependency: the designer is a content pipeline that
-produces a schema, and whatever engine you feed it to interprets the primitives.
-**Export → Resource management kit** downloads the schema plus its JSON Schema
-and nothing else.
+Where the Story domain compiles dialogue into actions, the RM domain compiles an
+economy into a **contract**. Everything in it is one of a handful of primitives,
+so the same machinery describes a bullet-hell Tower or a farming sim without the
+schema learning either:
 
-One seam joins the two worlds: a Resource flagged **Visible to the VN** is the
-*same variable* everywhere. The designer syncs it into the variables registry as
-a declared global under its VN name (GLOBAL scope compiles to the engine's
-`WORLD`), so the story editor offers it in conditionals and setVar blocks like
-any hand-registered variable. Sync runs on every save: delete the resource or
-uncheck the box and the variable is gone from the registry; hand-registered
-variables are never touched. A name that collides with a hand-registered
-variable refuses the save — the failure mode of silently shadowing one is the
-exact trap the registry exists to prevent.
+| primitive | what it is | examples |
+|---|---|---|
+| **Resource** | a named value with a cap | gold, mana, affection |
+| **Generator** | produces resources over time | mine, factory, aura node |
+| **Converter** | transforms resources into resources (+ recipes) | smelter, workshop |
+| **Node** | a point on a map or tree | expedition, encounter, story beat |
+| **Event** | a random outcome for a node | combat skirmish, hidden cache |
+| **Tech Tree** | unlock nodes | the tech grid |
+| **Assignable** | a worker you plug into a slot (tagged; tags drive bonuses) | worker, hero, module |
 
-Engines that want to verify the wiring can consume `schema.json` from the export
-kit, or validate `resource_management.json` against it directly.
+Under the hood every one of these is built from three tiny leaves — a **Requirement**
+(a gate: "you need X to do Y"), an **Effect** (a mutation: "when X, change Y"), and an
+**AssignmentBonus** (what a tag does to a slot). That's the whole vocabulary. It's in
+`hikarin/rm_schema.py` if you want the gory detail, and it's the same "a big thing is
+made of small reusable things" trick the Story blocks pull.
+
+Everything is written to `resource_management.json`, kept deliberately separate from
+`variables.json` — variables are the VN's scratch state, the RM file is the game's
+economy, and coupling them is how one ends up rewritten by accident. There is no
+runtime and no dependency: the designer produces a schema, and whatever engine you feed
+it to interprets the primitives.
+
+**Export → Resource management kit** downloads the schema plus its JSON Schema and
+nothing else — data only, no runtime code. An engine that wants to verify the wiring
+consumes `schema.json`, or validates `resource_management.json` against it directly.
+
+**The one seam between the two domains:** a Resource flagged **Visible to the VN** is
+the *same variable* everywhere. The designer syncs it into the variables registry as a
+declared global under its VN name (GLOBAL scope compiles to the engine's `WORLD`), so
+the story editor offers it in conditionals and setVar blocks like any hand-registered
+variable. Sync runs on every save: delete the resource or uncheck the box and the
+variable is gone from the registry; hand-registered variables are never touched. A name
+that collides with a hand-registered variable refuses the save — silently shadowing one
+is the exact trap the registry exists to prevent.
+
+## The two domains, side by side
+
+Same pipeline, different payloads. This is the whole "data-driven goodness" thesis in
+one table:
+
+```
+                 STORY (domain #1)              RESOURCE MANAGEMENT (domain #2)
+author      →    blocks in a visual editor       primitives in a designer
+validate    →    compile + label resolution      pydantic shape + cross-ref checks
+export      →    compiled JSON actions           schema.json + JSON Schema
+runtime     →    a VN runtime (not Hikarin)      your engine (not Hikarin)
+```
+
+Hikarin ships neither runtime. That's not missing pieces — that's the design.
 
 ## Projects and stories
 
@@ -312,6 +377,7 @@ anything about the consumer.
 | project | `hikarin` | **Hikarin** `.zip` — `manifest.json`, one script per story at the root, art as authored |
 | project | `pack` | Resource pack `.zip` — same scripts, arranged for a pack loader |
 | project | `bundle` | Project bundle `.hikarin.zip` — re-importable, carries blocks not actions |
+| project | `rmkit` | **Resource management kit** — `schema.json` + JSON Schema, data only |
 | story | `json` | Compiled actions for one story |
 | story | `txt` | Plain-text script |
 | story | `md` | Markdown script, labels as `##` headings |
@@ -367,15 +433,24 @@ main.py                    FastAPI: static/, project+story CRUD, compile, export
 hikarin/blocks.py          block -> engine action mapping (the vocabulary)
 hikarin/compiler.py        many .story files -> one flat JSON (per story)
 hikarin/projects.py        folder storage: projects contain stories
-hikarin/exporter.py        resource pack zip builder (one JSON per story)
 hikarin/variables.py       the shared global variable registry
 hikarin/export_formats.py  the export registry (what can be built, as data)
+hikarin/exporter.py        resource pack zip builder (one JSON per story)
+hikarin/rm_schema.py       RM domain: primitives + validation (models only)
+hikarin/resource_management.py  RM load/save + VN variable sync
+hikarin/rm_exporter.py     RM kit exporter (schema.json + JSON Schema)
 static/manager.*           the launcher: projects, stories, assets, variables, export
 static/assets.js           the asset window (mounted by whichever page needs it)
-static/                    the editor (vanilla JS, no build step)
+static/                    the editor + rm-editor (vanilla JS, no build step)
 tests/                     pytest
 tools/                     one-off migration scripts
 ```
+
+Notice the shape: each domain is a `schema`/`compiler` pair (pure data-in, data-out)
+plus a thin `projects`/`main.py` layer that does the file IO and HTTP. The RM domain
+is just the second instance of that shape. Adding a third doesn't mean a new
+architecture — it means another `schema` + `exporter` pair that hangs off the same
+`projects`/`variables`/`assets` substrate.
 
 **Why a server.** Compiling and zipping are filesystem work. Doing that in a
 browser means either a Chromium-only file API or download-and-manually-unzip. On
@@ -391,9 +466,14 @@ hunting through the wrong file twice.
 if you want version control. The filesystem is already a database with worse
 query performance and better debugging.
 
+**Why no runtime.** Because that's the whole point. See the top. If Hikarin ran
+the data itself, it would be an engine, and then it would only ever be good at
+the one kind of game its engine runs. As a pure compiler, it's good at *every*
+kind — the runtime is somebody else's problem, and there are a lot of somebodies.
+
 ## Format
 
-`FORMAT.md` is ground truth on the shipped JSON: action vocabulary, scopes,
+`FORMAT.md` is ground truth on the shipped Story JSON: action vocabulary, scopes,
 conditions, injected variables, and the spine pattern both the editor and the
 runtime are built against.
 
@@ -411,7 +491,7 @@ PUT    /api/projects/{slug}                       pack metadata
 DELETE /api/projects/{slug}
 POST   /api/projects/{slug}/duplicate             {"new_slug": "..."}
 POST   /api/projects/{slug}/rename                {"new_slug": "..."}
-POST   /api/projects/import-zip?slug=...          (body: .hikarin.zip bundle)
+POST   /api/projects/{slug}/import-zip?slug=...          (body: .hikarin.zip bundle)
 
 GET    /api/projects/{slug}/variables             declared global variables
 PUT    /api/projects/{slug}/variables             replace them (validated first)
@@ -464,6 +544,11 @@ Things that will bite you, written down so they only bite once:
   operations and share no code.
 - **A local variable is a bare name, and `scope: ""` is not the same thing.** An
   empty scope key still emits a key. Emit nothing at all.
+- **The RM ↔ VN sync is one-way and replace-wholesale.** It rewrites the
+  RM-derived variable set every save and never touches hand-registered entries —
+  so a collision refuses the save rather than silently shadowing. If a VN-visible
+  resource "vanished" from the variables tab, check whether its name now belongs to
+  a hand-registered global.
 
 ## Test
 
@@ -471,7 +556,7 @@ Things that will bite you, written down so they only bite once:
 uv run pytest -q
 ```
 
-125 tests, real files in a temp directory, no mocks of the filesystem.
+137 tests, real files in a temp directory, no mocks of the filesystem.
 
 ## Licence
 
