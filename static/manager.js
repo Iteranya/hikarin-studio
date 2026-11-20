@@ -1001,22 +1001,24 @@ function createStoryDialog() {
     };
 
     // The story name mirrors the character until the author takes it over —
-    // the common case is one folder per story, and making them type it twice is
-    // a pointless chore.
-    charEl.oninput = () => {
-      if (!slugEl.readOnly) return;
-      slugEl.value = charEl.value.trim().toLowerCase().replace(/\s+/g, '_');
-    };
-    slugEl.oninput = () => { slugEl.readOnly = true; };
-    slugEl.onfocus = () => { slugEl.readOnly = false; };
+        // the common case is one folder per story, and making them type it twice is
+        // a pointless chore.
+        charEl.oninput = () => {
+          if (!slugEl.readOnly) return;
+          slugEl.value = charEl.value.trim().toLowerCase().replace(/\s+/g, '_');
+        };
+        // User typing in the slug means they're taking over; keep it editable
+        // (the charEl.oninput above already stops mirroring when slug is editable).
+        slugEl.oninput = () => { slugEl.readOnly = false; };
+        slugEl.onfocus = () => { slugEl.readOnly = false; };
 
-    $('story-dialog-ok').onclick = submit;
-    $('story-dialog-cancel').onclick = () => done(null);
-    $('story-dialog-close').onclick = () => done(null);
-    document.addEventListener('keydown', onKey);
-    backdrop.addEventListener('click', onClick);
-  });
-}
+        $('story-dialog-ok').onclick = submit;
+        $('story-dialog-cancel').onclick = () => done(null);
+        $('story-dialog-close').onclick = () => done(null);
+        document.addEventListener('keydown', onKey);
+        backdrop.addEventListener('click', onClick);
+      });
+    }
 
 function renameStoryDialog(storySlug) {
   return new Promise((resolve) => {
