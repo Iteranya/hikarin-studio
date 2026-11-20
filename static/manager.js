@@ -232,10 +232,44 @@ function renderStories(root, slug, stories) {
     note.innerHTML =
       'This project has no stories yet. A story is one story\'s script — add one to start writing.';
     list.appendChild(note);
-  }
+  } else {
+    // Group stories by character (the trigger name). Multiple story folders
+    // can share the same character — they're different scripts for the same
+    // in-game person. Render as grouped sections.
+    const groups = new Map();
+    for (const s of stories) {
+      const key = s.character || s.slug;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(s);
+    }
 
-  for (const s of stories) {
-    list.appendChild(storyCard(s));
+    for (const [character, groupStories] of groups) {
+      const group = document.createElement('div');
+      group.className = 'story-group';
+
+      const groupHead = document.createElement('div');
+      groupHead.className = 'story-group-head';
+      const label = document.createElement('span');
+      label.className = 'story-group-label';
+      label.textContent = character;
+      groupHead.appendChild(label);
+      // Show count if more than one script for this character
+      if (groupStories.length > 1) {
+        const count = document.createElement('span');
+        count.className = 'story-group-count';
+        count.textContent = `${groupStories.length} scripts`;
+        groupHead.appendChild(count);
+      }
+      group.appendChild(groupHead);
+
+      const groupList = document.createElement('div');
+      groupList.className = 'story-group-list';
+      for (const s of groupStories) {
+        groupList.appendChild(storyCard(s));
+      }
+      group.appendChild(groupList);
+      list.appendChild(group);
+    }
   }
 
   root.appendChild(list);
