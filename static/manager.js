@@ -235,7 +235,7 @@ function renderStories(root, slug, stories) {
   } else {
     // Group stories by character (the trigger name). Multiple story folders
     // can share the same character — they're different scripts for the same
-    // in-game person. Render as grouped sections.
+    // in-game person. Render as grouped sections with collapsible headers.
     const groups = new Map();
     for (const s of stories) {
       const key = s.character || s.slug;
@@ -249,10 +249,21 @@ function renderStories(root, slug, stories) {
 
       const groupHead = document.createElement('div');
       groupHead.className = 'story-group-head';
+      groupHead.tabIndex = 0;
+      groupHead.role = 'button';
+      groupHead.setAttribute('aria-expanded', 'true');
+
+      const toggle = document.createElement('span');
+      toggle.className = 'story-group-toggle';
+      toggle.textContent = '▼';
+      toggle.setAttribute('aria-hidden', 'true');
+      groupHead.appendChild(toggle);
+
       const label = document.createElement('span');
       label.className = 'story-group-label';
       label.textContent = character;
       groupHead.appendChild(label);
+
       // Show count if more than one script for this character
       if (groupStories.length > 1) {
         const count = document.createElement('span');
@@ -260,13 +271,33 @@ function renderStories(root, slug, stories) {
         count.textContent = `${groupStories.length} scripts`;
         groupHead.appendChild(count);
       }
-      group.appendChild(groupHead);
 
       const groupList = document.createElement('div');
       groupList.className = 'story-group-list';
       for (const s of groupStories) {
         groupList.appendChild(storyCard(s));
       }
+
+      // Collapsible behavior
+      let expanded = true;
+      const toggleGroup = () => {
+        expanded = !expanded;
+        groupList.style.display = expanded ? 'flex' : 'none';
+        groupHead.setAttribute('aria-expanded', expanded);
+        toggle.textContent = expanded ? '▼' : '▶';
+      };
+      groupHead.onclick = (e) => {
+        if (e.target.closest('.story-group-count')) return;
+        toggleGroup();
+      };
+      groupHead.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleGroup();
+        }
+      };
+
+      group.appendChild(groupHead);
       group.appendChild(groupList);
       list.appendChild(group);
     }

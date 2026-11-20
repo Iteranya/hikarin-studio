@@ -334,6 +334,30 @@ half file tree, half project list, and a "project" that means three things.
   text-transform: uppercase;
   letter-spacing: .05em;
   color: var(--text-dim);
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: background .1s;
+}
+
+.story-group-head:hover {
+  background: var(--bg-raise);
+}
+
+.story-group-toggle {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--text-faint);
+  transition: transform .15s;
+  user-select: none;
+}
+
+.story-group-head[aria-expanded="false"] .story-group-toggle {
+  transform: rotate(-90deg);
 }
 
 .story-group-label {
@@ -344,11 +368,13 @@ half file tree, half project list, and a "project" that means three things.
 }
 
 .story-group-count {
+  flex: 0 0 auto;
   font-size: 10px;
   font-weight: 400;
   text-transform: none;
   letter-spacing: normal;
   color: var(--text-faint);
+  margin-left: auto;
 }
 
 .story-group-list {
