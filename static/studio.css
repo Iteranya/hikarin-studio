@@ -432,6 +432,18 @@ input.input:focus {
 
 .field-hint { margin-top: 3px; font-size: 10px; line-height: 1.4; color: var(--text-faint); }
 
+/* Toggle switch used in inspector fields (e.g., Say block "Next line keeps speaker") */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.toggle input { accent-color: var(--accent-dim); cursor: pointer; }
+
 .inspector-title {
   display: flex;
   align-items: center;

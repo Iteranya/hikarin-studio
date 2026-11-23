@@ -29,6 +29,13 @@ const state = {
   lastCompile: null,
 };
 
+// Say block preference: whether new say blocks inherit the previous speaker name
+let sayInheritSpeaker = localStorage.getItem('hikarin:sayInheritSpeaker') === 'true';
+function setSayInheritSpeaker(val) {
+  sayInheritSpeaker = val;
+  localStorage.setItem('hikarin:sayInheritSpeaker', val);
+}
+
 // ── autosave ────────────────────────────────────────────────────────────────
 //
 // Everything writes itself. There is no "remember to save" step to forget, and
@@ -560,7 +567,22 @@ function addBlock(kind) {
 // selection and drops the cursor in its text field — the travelling speed of
 // an author writing dialogue, particularly thumb-sized on mobile.
 function addSayBlock() {
-  addBlock('say');
+  addSayBlockAfterCurrent();
+}
+
+/** Create a new Say block after the currently selected one, respecting the inherit-speaker preference. */
+function addSayBlockAfterCurrent() {
+  const cur = current();
+  const inheritLabel = sayInheritSpeaker && cur?.kind === 'say' ? cur.data.label : '';
+  const items = blocks();
+  const insertAt = state.selected ? state.selected.index + 1 : items.length;
+  items.splice(insertAt, 0, { kind: 'say', data: { label: inheritLabel, content: '' } });
+  state.selected = { file: state.activeFile, index: insertAt };
+  markDirty();
+  renderBlocks();
+  renderInspector();
+  renderOutline();
+  updateCounts();
   if (isMobileLayout()) showMobilePane('inspector');
   const areas = $('inspector-body').querySelectorAll('textarea');
   const target = areas.length > 1 ? areas[1] : areas[0];
@@ -840,10 +862,37 @@ function fieldsFor(block) {
     ({ key, label, render: () => textarea(key, label, rows) });
 
   switch (block.kind) {
-    case 'say':
-      all.push(text('label', 'Speaker', 'Cupa — leave empty for narration'));
-      all.push(area('content', 'Text', 4));
-      break;
+      case 'say':
+        all.push(text('label', 'Speaker', 'Cupa — leave empty for narration'));
+        // Toggle: whether the next Say block inherits this speaker name
+        all.push({
+          key: 'inheritSpeaker',
+          label: 'Next line keeps speaker',
+          render: () => {
+            const wrap = document.createElement('div');
+            wrap.className = 'field';
+            const lab = document.createElement('label');
+            lab.className = 'field-label';
+            lab.textContent = 'Next line keeps speaker';
+            wrap.appendChild(lab);
+            const toggle = document.createElement('div');
+            toggle.className = 'toggle';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.checked = sayInheritSpeaker;
+            input.onchange = () => setSayInheritSpeaker(input.checked);
+            toggle.appendChild(input);
+            const span = document.createElement('span');
+            span.textContent = 'When on, pressing Enter in the text field creates a new Say block with the same speaker.';
+            span.style.fontSize = '11px';
+            span.style.color = 'var(--text-dim)';
+            toggle.appendChild(span);
+            wrap.appendChild(toggle);
+            return wrap;
+          }
+        });
+        all.push(area('content', 'Text', 4));
+        break;
 
     case 'choice':
     case 'nightChoice':
@@ -1090,6 +1139,15 @@ function textarea(key, label, rows) {
     current().data[key] = el.value;
     commit();
   };
+  // Enter in a Say block's content field → create a new Say block after this one
+  if (current().kind === 'say' && key === 'content') {
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        addSayBlockAfterCurrent();
+      }
+    });
+  }
   return wrapField(label, el);
 }
 
