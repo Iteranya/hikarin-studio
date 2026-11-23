@@ -670,16 +670,30 @@ function renderInspector() {
   }
 
   // When the line you are writing is a Say, repeating the button at the FOOT
-  // of the form saves the scroll-back to the header: thumb finishes the
-  // sentence, thumb taps, next line.
-  if (block.kind === 'say') {
-    const again = document.createElement('button');
-    again.className = 'btn ghost say-add-bottom';
-    again.textContent = '+ Say';
-    again.title = 'Add another Say block right after this one';
-    again.onclick = addSayBlock;
-    body.appendChild(again);
-  }
+    // of the form saves the scroll-back to the header: thumb finishes the
+    // sentence, thumb taps, next line.
+    if (block.kind === 'say') {
+      const footer = document.createElement('div');
+      footer.style.cssText = 'display:flex;align-items:center;gap:12px;margin-top:8px';
+      const again = document.createElement('button');
+      again.className = 'btn ghost say-add-bottom';
+      again.textContent = '+ Say';
+      again.title = 'Add another Say block right after this one';
+      again.onclick = addSayBlock;
+      footer.appendChild(again);
+      const toggle = document.createElement('div');
+      toggle.className = 'toggle';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = sayInheritSpeaker;
+      input.onchange = () => setSayInheritSpeaker(input.checked);
+      toggle.appendChild(input);
+      const span = document.createElement('span');
+      span.textContent = 'Keep speaker';
+      toggle.appendChild(span);
+      footer.appendChild(toggle);
+      body.appendChild(footer);
+    }
 }
 
 /** Up to two blocks above `index`, as a compact read-only strip. */
@@ -862,37 +876,10 @@ function fieldsFor(block) {
     ({ key, label, render: () => textarea(key, label, rows) });
 
   switch (block.kind) {
-      case 'say':
-        all.push(text('label', 'Speaker', 'Cupa — leave empty for narration'));
-        // Toggle: whether the next Say block inherits this speaker name
-        all.push({
-          key: 'inheritSpeaker',
-          label: 'Next line keeps speaker',
-          render: () => {
-            const wrap = document.createElement('div');
-            wrap.className = 'field';
-            const lab = document.createElement('label');
-            lab.className = 'field-label';
-            lab.textContent = 'Next line keeps speaker';
-            wrap.appendChild(lab);
-            const toggle = document.createElement('div');
-            toggle.className = 'toggle';
-            const input = document.createElement('input');
-            input.type = 'checkbox';
-            input.checked = sayInheritSpeaker;
-            input.onchange = () => setSayInheritSpeaker(input.checked);
-            toggle.appendChild(input);
-            const span = document.createElement('span');
-            span.textContent = 'When on, pressing Enter in the text field creates a new Say block with the same speaker.';
-            span.style.fontSize = '11px';
-            span.style.color = 'var(--text-dim)';
-            toggle.appendChild(span);
-            wrap.appendChild(toggle);
-            return wrap;
-          }
-        });
-        all.push(area('content', 'Text', 4));
-        break;
+        case 'say':
+          all.push(text('label', 'Speaker', 'Cupa — leave empty for narration'));
+          all.push(area('content', 'Text', 4));
+          break;
 
     case 'choice':
     case 'nightChoice':
