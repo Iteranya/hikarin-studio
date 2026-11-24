@@ -10,7 +10,7 @@ A small FastAPI app. No database, no accounts: a project is a folder under
 
 The shape of the API follows the shape of the data: projects contain stories,
 and a story is what the editor opens. ``/api/projects/{slug}`` is the launcher
-view (pack metadata, story list); ``/api/projects/{slug}/stories/{story}`` is
+view (pack metadata, story list); ``/api/projects/{slug}/scripts/{character}/{script}`` is
 what the editor edits.
 """
 
@@ -39,7 +39,7 @@ from hikarin.exporter import (
     build_project_bundle,
     build_text,
     export_filename_for,
-    story_filename,
+    script_slug,
 )
 from hikarin.export_formats import EXPORT_FORMATS, defaults, get_format, public_formats
 from hikarin.rm_exporter import build_rmkit
@@ -78,8 +78,9 @@ class CreateProjectRequest(BaseModel):
     meta: dict = Field(default_factory=dict)
 
 
-class CreateStoryRequest(BaseModel):
-    slug: str
+class CreateScriptRequest(BaseModel):
+    character: str
+    script: str
     meta: dict = Field(default_factory=dict)
 
 
@@ -87,7 +88,7 @@ class RenameRequest(BaseModel):
     new_slug: str
 
 
-class RenameStoryRequest(BaseModel):
+class RenameScriptRequest(BaseModel):
     new_slug: str
     character: str | None = None
 
@@ -323,60 +324,84 @@ def validate_rm(slug: str, req: ResourceManagementRequest):
 # inside them. Everything the editor edits lives under here.
 
 
-@app.get("/api/projects/{slug}/stories")
-def list_stories(slug: str):
-    return _project_or_404(project_store.load_project, slug)["stories"]
+@app.get("/api/projects/{slug}/scripts")
+def list_scripts(slug: str):
+    """Every character with its scripts, grouped — what the manager renders."""
+    return _project_or_404(project_store.load_project, slug)["characters"]
 
 
-@app.post("/api/projects/{slug}/stories")
-def create_story(slug: str, req: CreateStoryRequest):
-    return _project_or_400(project_store.create_story, slug, req.slug, req.meta)
+@app.post("/api/projects/{slug}/scripts")
+def create_script(slug: str, req: CreateScriptRequest):
+    return _project_or_400(
+        project_store.create_script, slug, req.character, req.script, req.meta
+    )
 
 
-@app.get("/api/projects/{slug}/stories/{story}")
-def get_story(slug: str, story: str):
-    return _project_or_404(project_store.load_story, slug, story)
+@app.get("/api/projects/{slug}/scripts/{character}/{script}")
+def get_script(slug: str, character: str, script: str):
+    return _project_or_404(project_store.load_script, slug, character, script)
 
 
-@app.put("/api/projects/{slug}/stories/{story}")
-def save_story(slug: str, story: str, req: StorySaveRequest):
+@app.put("/api/projects/{slug}/scripts/{character}/{script}")
+def save_script(slug: str, character: str, script: str, req: StorySaveRequest):
     files = {
         name: [b.model_dump() for b in blocks_] for name, blocks_ in req.files.items()
     }
-    return _project_or_400(project_store.save_story, slug, story, req.meta, files)
+    return _project_or_400(
+        project_store.save_script, slug, character, script, req.meta, files
+    )
 
 
-@app.delete("/api/projects/{slug}/stories/{story}")
-def delete_story(slug: str, story: str):
-    _project_or_404(project_store.delete_story, slug, story)
+@app.delete("/api/projects/{slug}/scripts/{character}/{script}")
+def delete_script(slug: str, character: str, script: str):
+    _project_or_404(project_store.delete_script, slug, character, script)
     return {"deleted": True}
 
 
-@app.post("/api/projects/{slug}/stories/{story}/duplicate")
-def duplicate_story(slug: str, story: str, req: RenameRequest):
-    return _project_or_400(project_store.duplicate_story, slug, story, req.new_slug)
+@app.delete("/api/projects/{slug}/characters/{character}")
+def delete_character(slug: str, character: str):
+    """Remove a character and every script under it."""
+    _project_or_404(project_store.delete_character, slug, character)
+    return {"deleted": True}
 
 
-@app.post("/api/projects/{slug}/stories/{story}/rename")
-def rename_story(slug: str, story: str, req: RenameStoryRequest):
-    """Move a story, and optionally set its character.
+@app.post("/api/projects/{slug}/scripts/{character}/{script}/duplicate")
+def duplicate_script(slug: str, character: str, script: str, req: RenameScriptRequest):
+    return _project_or_400(
+        project_store.duplicate_script,
+        slug,
+        character,
+        script,
+        req.new_slug,
+        req.character,
+    )
 
-    One call rather than rename-then-save: a save rewrites every ``.story`` file,
-    so changing a single manifest string through it would mean re-sending all the
-    blocks and risking them.
+
+@app.post("/api/projects/{slug}/scripts/{character}/{script}/rename")
+def rename_script(slug: str, character: str, script: str, req: RenameScriptRequest):
+    """Rename a script and/or move it under a different character.
+
+    One call rather than rename-then-save: a save rewrites every ``.story``
+    file, so changing a single manifest string through it would mean re-sending
+    all the blocks and risking them.
     """
     return _project_or_400(
-        project_store.rename_story, slug, story, req.new_slug, req.character
+        project_store.rename_script,
+        slug,
+        character,
+        script,
+        req.new_slug,
+        req.character,
     )
 
 
 # ── compile ─────────────────────────────────────────────────────────────────
 
 
-@app.get("/api/projects/{slug}/stories/{story}/compile")
-def compile_story_endpoint(slug: str, story: str):
-    """Compile one story without writing anything. The editor's Validate button."""
-    loaded = _project_or_404(project_store.load_story, slug, story)
+@app.get("/api/projects/{slug}/scripts/{character}/{script}/compile")
+def compile_script_endpoint(slug: str, character: str, script: str):
+    """Compile one script without writing anything. The editor's Validate button."""
+    loaded = _project_or_404(project_store.load_script, slug, character, script)
     result = compile_project(loaded["meta"], loaded["files"])
     return {
         "ok": result.ok,
@@ -388,23 +413,24 @@ def compile_story_endpoint(slug: str, story: str):
     }
 
 
-@app.get("/api/projects/{slug}/stories/{story}/play")
-def play_story(slug: str, story: str):
+@app.get("/api/projects/{slug}/scripts/{character}/{script}/play")
+def play_script(slug: str, character: str, script: str):
     """Compiled actions for the in-browser preview.
 
     Same compiler as export, so what you test is what ships. Errors come back as
-    a 200 with ``ok: false`` rather than a 4xx: a broken story is a normal state
+    a 200 with ``ok: false`` rather than a 4xx: a broken script is a normal state
     while writing, and the preview page renders the problems in place of the
     stage instead of showing a network error.
     """
-    loaded = _project_or_404(project_store.load_story, slug, story)
+    loaded = _project_or_404(project_store.load_script, slug, character, script)
     result = compile_project(loaded["meta"], loaded["files"])
     return {
         "ok": result.ok,
         "errors": result.errors,
         "warnings": result.warnings,
         "actions": result.actions,
-        "character": loaded["meta"].get("character") or story,
+        "character": loaded["meta"].get("character") or character,
+        "script": script,
         "startLabel": loaded["meta"].get("startLabel") or "start",
         # Where the viewer should look for sprite and background images.
         "assetsPath": f"/api/projects/{slug}/assets/",
@@ -577,28 +603,46 @@ def serve_asset(slug: str, path: str):
 
 # ── export ──────────────────────────────────────────────────────────────────
 #
-# A pack export compiles every story and writes one JSON per story. A single
-# story can still be exported on its own (json/txt/md), which is what the
-# editor's Export button does when you are looking at one story.
+# A pack export compiles every script and writes one JSON per script. A single
+# script can still be exported on its own (json/txt/md), which is what the
+# editor's Export button does when you are looking at one script.
 
 
-def _compiled_stories(slug: str) -> dict[str, tuple[dict, CompileResult]]:
-    """Every story in the project, compiled. Raises 400 if any of them is broken."""
+def _compiled_scripts(slug: str) -> dict[str, tuple[dict, CompileResult]]:
+    """Every script in the project, compiled, keyed by ``"<character>/<script>"``.
+
+    Raises 400 if any script is broken.
+    """
     project = _project_or_404(project_store.load_project, slug)
     out: dict[str, tuple[dict, CompileResult]] = {}
     errors: list[str] = []
-    for summary in project["stories"]:
-        loaded = project_store.load_story(slug, summary["slug"])
+    for summary in project["scripts"]:
+        character, script = summary["character"], summary["script"]
+        loaded = project_store.load_script(slug, character, script)
         result = compile_project(loaded["meta"], loaded["files"])
         if result.errors:
-            errors.append(f'{summary["slug"]}: {result.errors[0]}')
+            errors.append(f"{character}/{script}: {result.errors[0]}")
             continue
-        out[summary["slug"]] = (loaded["meta"], result)
+        out[f"{character}/{script}"] = (loaded["meta"], result)
     if errors:
         raise HTTPException(
             status_code=400,
             detail={"ok": False, "message": "Fix compile errors before exporting.", "errors": errors},
         )
+    return out
+
+
+def _raw_scripts(slug: str) -> dict[str, tuple[dict, dict]]:
+    """Every script's authoring files, keyed by ``"<character>/<script>"``.
+
+    What the bundle export carries — blocks, not compiled actions.
+    """
+    project = _project_or_404(project_store.load_project, slug)
+    out: dict[str, tuple[dict, dict]] = {}
+    for summary in project["scripts"]:
+        character, script = summary["character"], summary["script"]
+        loaded = project_store.load_script(slug, character, script)
+        out[f"{character}/{script}"] = (loaded["meta"], loaded["files"])
     return out
 
 
@@ -609,19 +653,19 @@ def export_project(slug: str, format: str = "pack", pack_format: int | None = No
     ``pack_format`` is an export option, not a project setting: the same pack of
     scripts can be built for several runtime versions, so it is a query
     parameter here rather than a field in project.json.
+
+    Layout by format: ``pack`` and ``hikarin`` flatten to ``<character>_<script>``
+    slugs; ``bundle`` keeps the nested ``stories/<character>/<script>/`` folders.
     """
     project = _project_or_404(project_store.load_project, slug)
     fmt = (format or "pack").lower()
 
-    import io as _io
-    import json as _json
-
     try:
         if fmt == "pack":
-            stories = _compiled_stories(slug)
+            scripts = _compiled_scripts(slug)
             payload = build_pack(
                 project["meta"],
-                stories,
+                scripts,
                 project_store.project_dir(slug),
                 pack_format=pack_format,
             )
@@ -629,19 +673,17 @@ def export_project(slug: str, format: str = "pack", pack_format: int | None = No
             filename = export_filename_for(project["meta"], "pack")
 
         elif fmt == "hikarin":
-            stories = _compiled_stories(slug)
-            payload = build_hikarin(project["meta"], stories, project_store.project_dir(slug))
+            scripts = _compiled_scripts(slug)
+            payload = build_hikarin(project["meta"], scripts, project_store.project_dir(slug))
             media = "application/zip"
             filename = export_filename_for(project["meta"], "hikarin")
 
         elif fmt == "bundle":
-            # The bundle carries authoring blocks, not compiled actions.
-            stories = {}
-            for summary in project["stories"]:
-                loaded = project_store.load_story(slug, summary["slug"])
-                stories[summary["slug"]] = (loaded["meta"], loaded["files"])
+            # The bundle carries authoring blocks, not compiled actions, and
+            # keeps the character/script folder nesting.
+            scripts = _raw_scripts(slug)
             payload = build_project_bundle(
-                project["meta"], stories, project_store.project_dir(slug)
+                project["meta"], scripts, project_store.project_dir(slug)
             )
             media = "application/zip"
             filename = export_filename_for(project["meta"], "bundle")
@@ -655,17 +697,17 @@ def export_project(slug: str, format: str = "pack", pack_format: int | None = No
             )
 
         elif fmt == "story-json":
-            story = _require_story_param(project)
-            loaded = project_store.load_story(slug, story)
+            character, script = _require_script_param(project)
+            loaded = project_store.load_script(slug, character, script)
             result = compile_project(loaded["meta"], loaded["files"])
             payload = build_json(loaded["meta"], result)
             media = "application/json"
-            filename = f"{story_filename(loaded['meta'])}.json"
+            filename = f"{script_slug(character, script)}.json"
 
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown export format: {format!r} (pack|bundle|story-json|rmkit)",
+                detail=f"Unknown export format: {format!r} (pack|hikarin|bundle|story-json|rmkit)",
             )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -677,10 +719,10 @@ def export_project(slug: str, format: str = "pack", pack_format: int | None = No
     )
 
 
-@app.get("/api/projects/{slug}/stories/{story}/export")
-def export_story(slug: str, story: str, format: str = "json"):
-    """One story, compiled and written out on its own."""
-    loaded = _project_or_404(project_store.load_story, slug, story)
+@app.get("/api/projects/{slug}/scripts/{character}/{script}/export")
+def export_script(slug: str, character: str, script: str, format: str = "json"):
+    """One script, compiled and written out on its own."""
+    loaded = _project_or_404(project_store.load_script, slug, character, script)
     result = compile_project(loaded["meta"], loaded["files"])
     if result.errors:
         return JSONResponse(
@@ -693,15 +735,15 @@ def export_story(slug: str, story: str, format: str = "json"):
         if fmt == "json":
             payload = build_json(loaded["meta"], result)
             media = "application/json"
-            filename = f"{story_filename(loaded['meta'])}.json"
+            filename = f"{script_slug(character, script)}.json"
         elif fmt == "txt":
             payload = build_text(loaded["meta"], result)
             media = "text/plain"
-            filename = f"{story}.txt"
+            filename = f"{script_slug(character, script)}.txt"
         elif fmt == "md":
             payload = build_markdown(loaded["meta"], result)
             media = "text/markdown"
-            filename = f"{story}.md"
+            filename = f"{script_slug(character, script)}.md"
         else:
             raise HTTPException(
                 status_code=400, detail=f"Unknown format {format!r} (json|txt|md)"
@@ -716,14 +758,14 @@ def export_story(slug: str, story: str, format: str = "json"):
     )
 
 
-def _require_story_param(project: dict) -> str:
-    """Pick the story for a project-level single-story export."""
-    stories = project.get("stories") or []
-    if len(stories) == 1:
-        return stories[0]["slug"]
+def _require_script_param(project: dict) -> tuple[str, str]:
+    """Pick the single script for a project-level single-script export."""
+    scripts = project.get("scripts") or []
+    if len(scripts) == 1:
+        return scripts[0]["character"], scripts[0]["script"]
     raise HTTPException(
         status_code=400,
-        detail="This project has several stories; export one from its own endpoint.",
+        detail="This project has several scripts; export one from its own endpoint.",
     )
 
 

@@ -47,7 +47,7 @@ EXPORT_FORMATS: list[dict[str, Any]] = [
         "label": "Hikarin",
         "extension": ".zip",
         "scope": "project",
-        "hint": "Runtime-agnostic: manifest.json, one script per story at the root, and the images and sounds as authored. Reach for this unless something specifically wants a resource pack.",
+        "hint": "Runtime-agnostic: manifest.json, one flat <character>_<script>.json per script at the root, and the images and sounds as authored. Reach for this unless something specifically wants a resource pack.",
         "params": [],
     },
     {
@@ -79,7 +79,7 @@ EXPORT_FORMATS: list[dict[str, Any]] = [
         "label": "Project bundle",
         "extension": ".hikarin.zip",
         "scope": "project",
-        "hint": "A re-importable backup: project.json and every story's blocks. Use this to move a project between machines, not to ship it.",
+        "hint": "A re-importable backup: project.json and every character's and script's blocks, nested as stories/<character>/<script>/. Use this to move a project between machines, not to ship it.",
         "params": [],
     },
     {

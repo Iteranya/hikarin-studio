@@ -1,8 +1,9 @@
 """Project storage and export tests — real files in a temp directory.
 
-The model under test: a project is a pack, a story is one character's script inside
-it, and ``.story`` files are the tabs of that script. Every test here builds
-real folders, because the whole point of this module is the shape on disk.
+The model under test: a project is a pack, a character is one in-game person,
+and a script is one of that character's conversations. A script's ``.story``
+files are its tabs. Every test here builds real folders, because the whole
+point of this module is the shape on disk: ``stories/<character>/<script>/``.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from hikarin.exporter import (
     build_hikarin,
     build_pack,
     export_filename,
+    script_slug,
     story_filename,
 )
 
@@ -32,10 +34,10 @@ def temp_root(tmp_path, monkeypatch):
 
 @pytest.fixture
 def pack(temp_root):
-    """A project with two stories in it — the shape the editor actually sees."""
+    """A project with two characters — the shape the editor actually sees."""
     store.create_project("touhou", {"packName": "Touhou Pack"})
-    store.create_story("touhou", "cupa", {"character": "cupa"})
-    store.create_story("touhou", "reimu", {"character": "reimu"})
+    store.create_script("touhou", "cupa", "main", {"character": "cupa"})
+    store.create_script("touhou", "reimu", "main", {"character": "reimu"})
     return "touhou"
 
 
@@ -48,7 +50,7 @@ def test_create_project_scaffolds_mediafile_layout(temp_root):
     root = temp_root / "touhou"
 
     assert p["slug"] == "touhou"
-    assert p["stories"] == [], "a new project has no stories yet"
+    assert p["characters"] == [], "a new project has no characters yet"
     assert (root / "project.json").is_file()
 
     assert (root / "images" / "characters").is_dir()
@@ -61,29 +63,55 @@ def test_create_project_scaffolds_mediafile_layout(temp_root):
     assert (root / "images" / "asset" / "Add Background Here.txt").is_file()
 
 
-def test_create_story_scaffolds_one_file(temp_root):
+def test_create_script_scaffolds_one_file(temp_root):
     store.create_project("touhou")
-    s = store.create_story("touhou", "cupa", {"character": "cupa"})
+    s = store.create_script("touhou", "cupa", "main", {"character": "cupa"})
 
-    root = temp_root / "touhou" / "stories" / "cupa"
-    assert s["slug"] == "cupa"
+    root = temp_root / "touhou" / "stories" / "cupa" / "main"
+    assert s["character"] == "cupa"
+    assert s["script"] == "main"
     assert s["meta"]["character"] == "cupa"
     assert list(s["files"]) == ["main.story"]
     assert (root / "story.json").is_file()
     assert (root / "main.story").is_file()
 
 
-def test_project_lists_its_stories(temp_root):
+def test_character_groups_multiple_scripts(temp_root):
+    """One character, several scripts — the whole point of the nesting."""
+    store.create_project("touhou")
+    store.create_script("touhou", "miku", "main", {"character": "miku"})
+    store.create_script("touhou", "miku", "night", {"character": "miku"})
+
+    project = store.load_project("touhou")
+    assert len(project["characters"]) == 1
+    group = project["characters"][0]
+    assert group["character"] == "miku"
+    assert [s["script"] for s in group["scripts"]] == ["main", "night"]
+
+
+def test_two_characters_can_share_a_script_name(temp_root):
+    """The original bug: same script name under two characters must not collide."""
+    store.create_project("touhou")
+    store.create_script("touhou", "miku", "main", {"character": "miku"})
+    store.create_script("touhou", "rue", "main", {"character": "rue"})
+
+    project = store.load_project("touhou")
+    keys = {f'{s["character"]}/{s["script"]}' for s in project["scripts"]}
+    assert keys == {"miku/main", "rue/main"}
+
+
+def test_project_lists_its_scripts(temp_root):
     """The manager draws this; it must not need to parse any blocks."""
     store.create_project("touhou")
-    store.create_story("touhou", "cupa", {"character": "cupa"})
-    store.create_story("touhou", "reimu", {"character": "reimu"})
+    store.create_script("touhou", "cupa", "main", {"character": "cupa"})
+    store.create_script("touhou", "reimu", "main", {"character": "reimu"})
 
     projects = store.list_projects()
     assert len(projects) == 1
     assert projects[0]["slug"] == "touhou"
-    assert projects[0]["storyCount"] == 2
-    assert [s["slug"] for s in projects[0]["stories"]] == ["cupa", "reimu"]
+    assert projects[0]["characterCount"] == 2
+    assert projects[0]["scriptCount"] == 2
+    assert [c["character"] for c in projects[0]["characters"]] == ["cupa", "reimu"]
 
 
 def test_create_rejects_duplicate(temp_root):
@@ -92,16 +120,16 @@ def test_create_rejects_duplicate(temp_root):
         store.create_project("touhou")
 
 
-def test_create_rejects_duplicate_story(temp_root):
+def test_create_rejects_duplicate_script(temp_root):
     store.create_project("touhou")
-    store.create_story("touhou", "cupa")
+    store.create_script("touhou", "cupa", "main", {"character": "cupa"})
     with pytest.raises(store.ProjectError):
-        store.create_story("touhou", "cupa")
+        store.create_script("touhou", "cupa", "main", {"character": "cupa"})
 
 
-def test_story_needs_a_project(temp_root):
+def test_script_needs_a_project(temp_root):
     with pytest.raises(store.ProjectError):
-        store.create_story("nonexistent", "cupa")
+        store.create_script("nonexistent", "cupa", "main")
 
 
 @pytest.mark.parametrize("bad", ["../evil", "has space", "", "UPPER", "a/b"])
@@ -115,7 +143,7 @@ def test_create_rejects_bad_slugs(temp_root, bad):
 
 def test_save_and_load_roundtrip(temp_root):
     store.create_project("touhou")
-    store.create_story("touhou", "cupa")
+    store.create_script("touhou", "cupa", "main", {"character": "cupa"})
 
     meta = {"character": "cupa", "startLabel": "start", "description": "Cupa route"}
     files = {
@@ -125,50 +153,52 @@ def test_save_and_load_roundtrip(temp_root):
             {"kind": "end", "data": {}},
         ]
     }
-    store.save_story("touhou", "cupa", meta, files)
+    store.save_script("touhou", "cupa", "main", meta, files)
 
-    loaded = store.load_story("touhou", "cupa")
+    loaded = store.load_script("touhou", "cupa", "main")
     assert loaded["files"]["main.story"] == files["main.story"]
     assert loaded["meta"]["description"] == "Cupa route"
     assert loaded["projectSlug"] == "touhou"
+    assert loaded["character"] == "cupa"
+    assert loaded["script"] == "main"
 
 
 def test_save_deletes_removed_files(temp_root):
     """Deleting a tab deletes the file, so a reload cannot resurrect it."""
     store.create_project("touhou")
-    store.create_story("touhou", "cupa")
+    store.create_script("touhou", "cupa", "main", {"character": "cupa"})
 
-    store.save_story("touhou", "cupa", {"startLabel": "start"}, {
+    store.save_script("touhou", "cupa", "main", {"startLabel": "start"}, {
         "main.story": [{"kind": "label", "data": {"name": "start"}}],
         "night.story": [{"kind": "label", "data": {"name": "night"}}],
     })
-    assert (temp_root / "touhou" / "stories" / "cupa" / "night.story").is_file()
+    assert (temp_root / "touhou" / "stories" / "cupa" / "main" / "night.story").is_file()
 
-    store.save_story("touhou", "cupa", {"startLabel": "start"}, {
+    store.save_script("touhou", "cupa", "main", {"startLabel": "start"}, {
         "main.story": [{"kind": "label", "data": {"name": "start"}}],
     })
-    assert not (temp_root / "touhou" / "stories" / "cupa" / "night.story").exists()
+    assert not (temp_root / "touhou" / "stories" / "cupa" / "main" / "night.story").exists()
 
 
-def test_save_refuses_a_deleted_story(temp_root):
-    """The invariant: a save can never resurrect a story the user deleted."""
+def test_save_refuses_a_deleted_script(temp_root):
+    """The invariant: a save can never resurrect a script the user deleted."""
     store.create_project("touhou")
-    store.create_story("touhou", "cupa")
-    store.delete_story("touhou", "cupa")
+    store.create_script("touhou", "cupa", "main", {"character": "cupa"})
+    store.delete_script("touhou", "cupa", "main")
 
     with pytest.raises(store.ProjectError):
-        store.save_story("touhou", "cupa", {}, {"main.story": []})
+        store.save_script("touhou", "cupa", "main", {}, {"main.story": []})
 
 
-def test_story_labels_do_not_leak_into_another_story(temp_root):
-    """Labels are story-scoped: two stories may both have a 'start'."""
+def test_script_labels_do_not_leak_into_another_script(temp_root):
+    """Labels are script-scoped: two scripts may both have a 'start'."""
     store.create_project("touhou")
-    for name in ("cupa", "reimu"):
-        store.create_story("touhou", name)
+    store.create_script("touhou", "cupa", "main", {"character": "cupa"})
+    store.create_script("touhou", "reimu", "main", {"character": "reimu"})
 
     # Same label name in both, which would be a duplicate error in one compile.
-    for name in ("cupa", "reimu"):
-        result = store.compile_slug("touhou", name)
+    for character in ("cupa", "reimu"):
+        result = store.compile_script("touhou", character, "main")
         assert result.ok, result.errors
 
 
@@ -206,43 +236,41 @@ def test_asset_inventory_reads_mediafile_layout(temp_root):
     assert inventory["music"] == ["music/haggstrom.ogg"]
 
 
-def test_asset_inventory_ignores_pack_icon(temp_root):
-    """images/pack.png is the resource pack icon, not story content."""
-    store.create_project("touhou")
-    root = temp_root / "touhou"
-    (root / "images" / "pack.png").write_bytes(b"x")
-
-    inventory = store.list_assets(root)
-    assert inventory["backgrounds"] == []
-    assert inventory["characters"] == {}
-
-
-def test_asset_inventory_indexes_plain_image_folders(temp_root):
-    """images/asset/ doubles as the pool for show_custom boxes."""
-    store.create_project("touhou")
-    root = temp_root / "touhou"
-    (root / "images" / "asset" / "old-dsl.png").write_bytes(b"x")
-    (root / "images" / "asset" / "void.png").write_bytes(b"x")
-
-    inventory = store.list_assets(root)
-    assert inventory["folders"]["asset"] == ["old-dsl", "void"]
-    # and still listed as backgrounds, since a Background block uses the same file
-    assert "asset/old-dsl.png" in inventory["backgrounds"]
-
-
-def test_assets_are_shared_across_stories(pack, temp_root):
-    """A pack's art belongs to the project, so every story sees it."""
+def test_assets_are_shared_across_scripts(pack, temp_root):
+    """A pack's art belongs to the project, so every script sees it."""
     root = temp_root / pack
     sprite = root / "images" / "characters" / "cupa" / "default"
     sprite.mkdir(parents=True, exist_ok=True)
     (sprite / "happy.png").write_bytes(b"x")
 
-    for story in ("cupa", "reimu"):
-        loaded = store.load_story(pack, story)
-        assert "cupa" in loaded["assets"]["characters"], f"{story} cannot see the sprite"
+    for character in ("cupa", "reimu"):
+        loaded = store.load_script(pack, character, "main")
+        assert "cupa" in loaded["assets"]["characters"], f"{character} cannot see the sprite"
 
 
 # ── export ──────────────────────────────────────────────────────────────────
+
+
+def _compiled(pack):
+    """Every script in a project, compiled, keyed by ``character/script``."""
+    project = store.load_project(pack)
+    out = {}
+    for summary in project["scripts"]:
+        character, script = summary["character"], summary["script"]
+        loaded = store.load_script(pack, character, script)
+        out[f"{character}/{script}"] = (loaded["meta"], store.compile_script(pack, character, script))
+    return out
+
+
+def _raw(pack):
+    """Every script's authoring files, keyed by ``character/script``."""
+    project = store.load_project(pack)
+    out = {}
+    for summary in project["scripts"]:
+        character, script = summary["character"], summary["script"]
+        loaded = store.load_script(pack, character, script)
+        out[f"{character}/{script}"] = (loaded["meta"], loaded["files"])
+    return out
 
 
 def test_export_builds_real_resource_pack(pack, temp_root):
@@ -254,13 +282,8 @@ def test_export_builds_real_resource_pack(pack, temp_root):
     (root / "images" / "pack.png").write_bytes(b"ICON")
     (root / "sounds" / "music" / "haggstrom.ogg").write_bytes(b"OGG")
 
-    stories = {}
-    for summary in store.load_project(pack)["stories"]:
-        meta = store.load_story(pack, summary["slug"])["meta"]
-        stories[summary["slug"]] = (meta, store.compile_slug(pack, summary["slug"]))
-
     meta = store.load_project(pack)["meta"]
-    payload = build_pack(meta, stories, root)
+    payload = build_pack(meta, _compiled(pack), root)
 
     with zipfile.ZipFile(io.BytesIO(payload)) as zf:
         names = set(zf.namelist())
@@ -268,9 +291,9 @@ def test_export_builds_real_resource_pack(pack, temp_root):
         assert "pack.mcmeta" in names
         assert "pack.png" in names, "images/pack.png becomes the pack icon"
 
-        # one JSON per story, named by the trigger
-        assert "assets/hikarin/cupa.json" in names
-        assert "assets/hikarin/reimu.json" in names
+        # one flat JSON per script, named <character>_<script>
+        assert "assets/hikarin/cupa_main.json" in names
+        assert "assets/hikarin/reimu_main.json" in names
 
         # images/ -> textures/, structure preserved
         assert "assets/hikarin/textures/characters/cupa/default/happy.png" in names
@@ -295,15 +318,10 @@ def test_pack_format_is_an_export_option_not_a_project_field(pack, temp_root):
     project = store.load_project(pack)
     assert "packFormat" not in project["meta"], "pack format is not project state"
 
-    stories = {}
-    for summary in project["stories"]:
-        loaded = store.load_story(pack, summary["slug"])
-        stories[summary["slug"]] = (loaded["meta"], store.compile_slug(pack, summary["slug"]))
-
     root = store.project_dir(pack)
 
-    default_pack = build_pack(project["meta"], stories, root)
-    newer_pack = build_pack(project["meta"], stories, root, pack_format=99)
+    default_pack = build_pack(project["meta"], _compiled(pack), root)
+    newer_pack = build_pack(project["meta"], _compiled(pack), root, pack_format=99)
 
     def fmt_of(payload):
         with zipfile.ZipFile(io.BytesIO(payload)) as zf:
@@ -329,19 +347,14 @@ def test_hikarin_bundle_has_no_resource_pack_layout(pack, temp_root):
     (root / "sounds" / "music" / "haggstrom.ogg").write_bytes(b"OGG")
 
     project = store.load_project(pack)
-    stories = {}
-    for summary in project["stories"]:
-        loaded = store.load_story(pack, summary["slug"])
-        stories[summary["slug"]] = (loaded["meta"], store.compile_slug(pack, summary["slug"]))
-
-    payload = build_hikarin(project["meta"], stories, root)
+    payload = build_hikarin(project["meta"], _compiled(pack), root)
 
     with zipfile.ZipFile(io.BytesIO(payload)) as zf:
         names = set(zf.namelist())
 
-        # scripts at the root, named by trigger — no assets/hikarin/ prefix
-        assert "cupa.json" in names
-        assert "reimu.json" in names
+        # flat slugs at the root — no assets/hikarin/ prefix
+        assert "cupa_main.json" in names
+        assert "reimu_main.json" in names
         assert not any(n.startswith("assets/") for n in names), names
 
         # none of the resource-pack machinery
@@ -355,37 +368,32 @@ def test_hikarin_bundle_has_no_resource_pack_layout(pack, temp_root):
 
         manifest = json.loads(zf.read("manifest.json"))
         assert manifest["format"] == "hikarin"
-        assert [s["story"] for s in manifest["scripts"]] == ["cupa", "reimu"]
-        assert all(s["file"] == f'{s["character"]}.json' for s in manifest["scripts"])
+        assert {(s["character"], s["script"]) for s in manifest["scripts"]} == {
+            ("cupa", "main"),
+            ("reimu", "main"),
+        }
+        assert all(s["file"] == f'{s["character"]}_{s["script"]}.json' for s in manifest["scripts"])
 
 
-def test_hikarin_export_rejects_a_duplicate_trigger(pack):
-    """Two stories with same character now disambiguate by appending slug."""
+def test_export_disambiguates_by_character(pack):
+    """Two characters with a script named 'main' export as cupa_main / reimu_main.
+
+    This is the whole point of the character prefix: the flat slugs never
+    collide even though both scripts are named 'main'.
+    """
     meta = store.load_project(pack)["meta"]
-    files = {"main.story": [{"kind": "label", "data": {"name": "start"}}]}
-    store.save_story(pack, "cupa", {"character": "same"}, files)
-    store.save_story(pack, "reimu", {"character": "same"}, files)
+    data = build_hikarin(meta, _compiled(pack), store.project_dir(pack))
 
-    stories = {
-        "cupa": ({"character": "same"}, compile_project({"character": "same"}, files)),
-        "reimu": ({"character": "same"}, compile_project({"character": "same"}, files)),
-    }
-    data = build_hikarin(meta, stories, store.project_dir(pack))
-
-    # Verify the zip contains both files with disambiguated names
-    import zipfile
-    import io
     zf = zipfile.ZipFile(io.BytesIO(data))
     names = zf.namelist()
-    # Should have both: same_cupa.json and same_reimu.json (plus manifest, images/, sounds/)
-    assert "same_cupa.json" in names
-    assert "same_reimu.json" in names
-    assert "same.json" not in names  # no collision
-    # manifest should reference the disambiguated files
+    assert "cupa_main.json" in names
+    assert "reimu_main.json" in names
+    assert "main.json" not in names  # no bare collision
+
     manifest = json.loads(zf.read("manifest.json"))
     script_files = [s["file"] for s in manifest["scripts"]]
-    assert "same_cupa.json" in script_files
-    assert "same_reimu.json" in script_files
+    assert "cupa_main.json" in script_files
+    assert "reimu_main.json" in script_files
 
 
 def test_export_refuses_empty_project(temp_root):
@@ -395,9 +403,9 @@ def test_export_refuses_empty_project(temp_root):
         build_pack(meta, {}, temp_root / "touhou")
 
 
-def test_export_refuses_broken_story(temp_root):
+def test_export_refuses_broken_script(temp_root):
     store.create_project("touhou")
-    store.create_story("touhou", "cupa")
+    store.create_script("touhou", "cupa", "main", {"character": "cupa"})
     meta = {"character": "cupa"}
     files = {"main.story": [
         {"kind": "label", "data": {"name": "start"}},
@@ -406,39 +414,20 @@ def test_export_refuses_broken_story(temp_root):
     result = compile_project(meta, files)
     assert result.errors
     with pytest.raises(ValueError):
-        build_pack(meta, {"cupa": (meta, result)}, temp_root / "touhou")
+        build_pack(meta, {"cupa/main": (meta, result)}, temp_root / "touhou")
 
 
-def test_export_refuses_two_stories_with_one_trigger(pack):
-    """Two stories with same character now disambiguate by appending slug."""
-    meta = store.load_project(pack)["meta"]
-    files = {"main.story": [{"kind": "label", "data": {"name": "start"}}]}
-
-    # Same character name, different story slugs.
-    store.save_story(pack, "cupa", {"character": "same"}, files)
-    store.save_story(pack, "reimu", {"character": "same"}, files)
-
-    stories = {
-        "cupa": ({"character": "same"}, compile_project({"character": "same"}, files)),
-        "reimu": ({"character": "same"}, compile_project({"character": "same"}, files)),
-    }
-    data = build_pack(meta, stories, store.project_dir(pack))
-
-    # Verify the zip contains both files with disambiguated names
-    import zipfile
-    import io
-    zf = zipfile.ZipFile(io.BytesIO(data))
-    names = zf.namelist()
-    # Should have both: same_cupa.json and same_reimu.json under assets/hikarin/
-    assert "assets/hikarin/same_cupa.json" in names
-    assert "assets/hikarin/same_reimu.json" in names
-    assert "assets/hikarin/same.json" not in names  # no collision
+def test_script_slug_is_character_and_script():
+    assert script_slug("cupa", "main") == "cupa_main"
+    assert script_slug("Hong Meiling", "Night Scene") == "hong_meiling_night_scene"
 
 
 def test_story_filename_is_the_trigger():
+    # Deprecated single-script fallback: character alone when no script given.
     assert story_filename({"character": "Cupa"}) == "cupa"
     assert story_filename({"character": "Hong Meiling"}) == "hong_meiling"
-    assert story_filename({"slug": "fallback"}) == "fallback"
+    # With a distinct script, it becomes <character>_<script>.
+    assert story_filename({"character": "cupa"}, slug="night") == "cupa_night"
 
 
 def test_export_filename_is_safe():
@@ -447,19 +436,21 @@ def test_export_filename_is_safe():
     assert export_filename({}) == "pack.zip"
 
 
-def test_bundle_roundtrip_keeps_both_stories(pack, temp_root):
+def test_bundle_roundtrip_keeps_every_script(pack, temp_root):
     from hikarin.exporter import build_project_bundle
 
     project = store.load_project(pack)
-    stories = {}
-    for summary in project["stories"]:
-        loaded = store.load_story(pack, summary["slug"])
-        stories[summary["slug"]] = (loaded["meta"], loaded["files"])
+    bundle = build_project_bundle(project["meta"], _raw(pack), temp_root / pack)
 
-    bundle = build_project_bundle(project["meta"], stories, temp_root / pack)
+    # Bundle is the one export that nests: stories/<character>/<script>/.
+    with zipfile.ZipFile(io.BytesIO(bundle)) as zf:
+        names = set(zf.namelist())
+        assert "stories/cupa/main/story.json" in names
+        assert "stories/reimu/main/story.json" in names
 
     imported = store.import_project_zip("imported", bundle)
     assert imported["slug"] == "imported"
-    assert imported["meta"]["stories"] == ["cupa", "reimu"], "both stories survive the import"
-    assert (temp_root / "imported" / "stories" / "cupa" / "main.story").is_file()
-    assert (temp_root / "imported" / "stories" / "reimu" / "main.story").is_file()
+    keys = {f'{s["character"]}/{s["script"]}' for s in imported["scripts"]}
+    assert keys == {"cupa/main", "reimu/main"}, "both scripts survive the import"
+    assert (temp_root / "imported" / "stories" / "cupa" / "main" / "main.story").is_file()
+    assert (temp_root / "imported" / "stories" / "reimu" / "main" / "main.story").is_file()

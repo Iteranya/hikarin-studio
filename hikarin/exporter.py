@@ -54,22 +54,44 @@ IMAGE_EXT = (".png", ".jpg", ".jpeg")
 SOUND_EXT = (".ogg", ".wav", ".mp3")
 
 
-def story_filename(story_meta: dict, slug: str | None = None, disambiguate: bool = False) -> str:
-    """The JSON file name inside the pack for one story.
+def script_slug(character: str, script: str) -> str:
+    """The flat file name for one script inside an export zip.
 
-    This is the engine's trigger — the story's name, lowercased, spaces to
-    underscores. It is also what the author sees in the story list, so it has to
-    be predictable rather than clever.
-
-    If ``disambiguate`` is true (multiple stories share the same character),
-    append the slug to make the filename unique.
+    ``<character>_<script>`` — the character prefix is what disambiguates two
+    scripts that share a name under different characters (miku's ``main`` and
+    rue's ``main`` become ``miku_main`` and ``rue_main``). Lowercased, spaces to
+    underscores, so the result is a safe file name and a stable engine trigger.
     """
-    raw = (story_meta.get("character") or story_meta.get("slug") or "story").strip()
-    base = raw.lower().replace(" ", "_")
-    if disambiguate and slug:
-        # slug is already a valid filename; join with underscore
-        return f"{base}_{slug}"
-    return base
+    raw = f"{character}_{script}".strip().lower().replace(" ", "_")
+    return raw or "script"
+
+
+def story_filename(story_meta: dict, slug: str | None = None, disambiguate: bool = False) -> str:
+    """Deprecated: use :func:`script_slug`.
+
+    Kept for a single-script export that only has a story meta with a
+    ``character`` and no separate script name — it falls back to the character
+    as the script, which yields ``<character>_<character>`` collapsed to the
+    character alone when there is nothing to disambiguate.
+    """
+    character = story_meta.get("character") or story_meta.get("slug") or slug or "story"
+    if slug and slug != character:
+        return script_slug(character, slug)
+    return str(character).strip().lower().replace(" ", "_")
+
+
+def _split_key(key: str, story_meta: dict) -> tuple[str, str]:
+    """Recover ``(character, script)`` from a ``"character/script"`` key.
+
+    The exporter is fed the composite keys ``compile_all_scripts`` produces, but
+    a caller that only has a story meta still works: fall back to the meta's
+    ``character`` and the key as the script.
+    """
+    if "/" in key:
+        character, script = key.split("/", 1)
+        return character, script
+    character = story_meta.get("character") or key
+    return character, key
 
 
 def build_pack(
@@ -82,41 +104,35 @@ def build_pack(
 
     Args:
         meta:   the project manifest (packName, description).
-        stories: ``{story slug: (story meta, compile result)}``.
+        stories: ``{"<character>/<script>": (story meta, compile result)}``.
         project_path: the project folder, for images/ and sounds/.
         pack_format: the resource pack format version to target. Defaults to
             ``DEFAULT_PACK_FORMAT``. This is an export concern, not a project
             property: the same pack of scripts can be built for several runtime
             versions, so it belongs on this call rather than in project.json.
 
-    Raises ValueError if any story failed to compile, because shipping a broken
+    Layout is flat: one ``<character>_<script>.json`` per script at
+    ``assets/hikarin/``. The character prefix disambiguates two scripts that
+    share a name under different characters.
+
+    Raises ValueError if any script failed to compile, because shipping a broken
     script is worse than refusing to ship.
     """
     broken = [
-        f"{slug}: {result.errors[0]}"
-        for slug, (_story_meta, result) in stories.items()
+        f"{key}: {result.errors[0]}"
+        for key, (_story_meta, result) in stories.items()
         if result.errors
     ]
     if broken:
         raise ValueError(
-            "Cannot export, the story has compile errors:\n  " + "\n  ".join(broken)
+            "Cannot export, a script has compile errors:\n  " + "\n  ".join(broken)
         )
     if not stories:
-        raise ValueError("Cannot export: this project has no stories.")
+        raise ValueError("Cannot export: this project has no scripts.")
 
-    pack_name = meta.get("packName") or "Hikarin Pack"
     description = meta.get("description") or "Made with Hikarin Studio"
     if pack_format is None:
         pack_format = DEFAULT_PACK_FORMAT
-
-    # Count how many stories share each character (the trigger name).
-    # If a character appears more than once, we disambiguate filenames by
-    # appending the slug so multiple scripts for the same character don't
-    # overwrite each other in the zip.
-    char_counts: dict[str, int] = {}
-    for _slug, (story_meta, _result) in stories.items():
-        char = (story_meta.get("character") or story_meta.get("slug") or "story").strip().lower().replace(" ", "_")
-        char_counts[char] = char_counts.get(char, 0) + 1
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -124,7 +140,7 @@ def build_pack(
         # pack exists and which format version it targets.
         mcmeta = {
             "pack": {
-                "description": f"{description}\nStories: {len(stories)}",
+                "description": f"{description}\nScripts: {len(stories)}",
                 "pack_format": pack_format,
             }
         }
@@ -136,19 +152,17 @@ def build_pack(
         if icon.is_file():
             zf.write(icon, "pack.png")
 
-        # One JSON per story. If multiple stories share a character,
-        # disambiguate by appending the slug.
+        # One flat JSON per script, named <character>_<script>.json.
         written: dict[str, str] = {}
-        for slug, (story_meta, result) in stories.items():
-            char = (story_meta.get("character") or story_meta.get("slug") or "story").strip().lower().replace(" ", "_")
-            disambiguate = char_counts.get(char, 0) > 1
-            filename = story_filename(story_meta, slug=slug, disambiguate=disambiguate)
+        for key, (story_meta, result) in stories.items():
+            character, script = _split_key(key, story_meta)
+            filename = script_slug(character, script)
             if filename in written:
                 raise ValueError(
-                    f'Stories "{written[filename]}" and "{slug}" both compile to '
-                    f"{filename}.json. Give each story its own character name."
+                    f'Scripts "{written[filename]}" and "{key}" both compile to '
+                    f"{filename}.json. Give each script a distinct name."
                 )
-            written[filename] = slug
+            written[filename] = key
             zf.writestr(
                 f"assets/{CONTENT_NAMESPACE}/{filename}.json",
                 json.dumps(result.actions, indent=2, ensure_ascii=False),
@@ -206,49 +220,39 @@ def build_hikarin(
         lives.
     """
     broken = [
-        f"{slug}: {result.errors[0]}"
-        for slug, (_story_meta, result) in stories.items()
+        f"{key}: {result.errors[0]}"
+        for key, (_story_meta, result) in stories.items()
         if result.errors
     ]
     if broken:
         raise ValueError(
-            "Cannot export, the story has compile errors:\n  " + "\n  ".join(broken)
+            "Cannot export, a script has compile errors:\n  " + "\n  ".join(broken)
         )
     if not stories:
-        raise ValueError("Cannot export: this project has no stories.")
-
-    # Count how many stories share each character (the trigger name).
-    # If a character appears more than once, we disambiguate filenames by
-    # appending the slug so multiple scripts for the same character don't
-    # overwrite each other in the zip.
-    char_counts: dict[str, int] = {}
-    for _slug, (story_meta, _result) in stories.items():
-        char = (story_meta.get("character") or story_meta.get("slug") or "story").strip().lower().replace(" ", "_")
-        char_counts[char] = char_counts.get(char, 0) + 1
+        raise ValueError("Cannot export: this project has no scripts.")
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         scripts: list[dict[str, Any]] = []
         seen: dict[str, str] = {}
 
-        for slug, (story_meta, result) in stories.items():
-            char = (story_meta.get("character") or story_meta.get("slug") or "story").strip().lower().replace(" ", "_")
-            disambiguate = char_counts.get(char, 0) > 1
-            filename = story_filename(story_meta, slug=slug, disambiguate=disambiguate)
+        for key, (story_meta, result) in stories.items():
+            character, script = _split_key(key, story_meta)
+            filename = script_slug(character, script)
             if filename in seen:
                 raise ValueError(
-                    f'Stories "{seen[filename]}" and "{slug}" both compile to '
-                    f"{filename}.json. Give each story its own character name."
+                    f'Scripts "{seen[filename]}" and "{key}" both compile to '
+                    f"{filename}.json. Give each script a distinct name."
                 )
-            seen[filename] = slug
+            seen[filename] = key
             zf.writestr(
                 f"{filename}.json",
                 json.dumps(result.actions, indent=2, ensure_ascii=False),
             )
             scripts.append(
                 {
-                    "story": slug,
-                    "character": story_meta.get("character") or slug,
+                    "character": character,
+                    "script": script,
                     "file": f"{filename}.json",
                     "actions": len(result.actions),
                     "startLabel": story_meta.get("startLabel") or "start",
@@ -451,26 +455,37 @@ def build_markdown(meta, result) -> bytes:
 def build_project_bundle(meta, stories, project_path: Path) -> bytes:
     """Zip the whole authoring project so it can be imported back.
 
-    ``stories`` is ``{slug: (story meta, files)}`` — the bundle carries the
-    authoring blocks, not the compiled actions, because a bundle exists to be
-    reopened in the editor.
+    ``stories`` is ``{"<character>/<script>": (script meta, files)}`` — the
+    bundle carries the authoring blocks, not the compiled actions, because a
+    bundle exists to be reopened in the editor.
+
+    This is the only export that mirrors the on-disk nesting:
+    ``stories/<character>/<script>/story.json`` plus each ``.story`` tab. A
+    re-import recreates the same tree, so a project round-trips byte-for-byte
+    at the folder level. The compiled exports (hikarin, pack) flatten to
+    ``<character>_<script>.json`` slugs; the bundle keeps the folders because
+    its whole job is to be opened again.
     """
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         meta2 = {k: v for k, v in meta.items() if k != "stories"}
-        meta2["stories"] = list(stories)
+        meta2["stories"] = [
+            key for key, (_sm, _files) in stories.items()
+        ]
         zf.writestr("project.json", json.dumps(meta2, indent=2, ensure_ascii=False) + "\n")
 
-        for slug, (story_meta, files) in stories.items():
+        for key, (story_meta, files) in stories.items():
+            character, script = _split_key(key, story_meta)
             body = {k: v for k, v in story_meta.items() if k != "files"}
             body["files"] = list(files)
+            body["character"] = character
             zf.writestr(
-                f"stories/{slug}/story.json",
+                f"stories/{character}/{script}/story.json",
                 json.dumps(body, indent=2, ensure_ascii=False) + "\n",
             )
             for name, blocks in files.items():
                 zf.writestr(
-                    f"stories/{slug}/{name}",
+                    f"stories/{character}/{script}/{name}",
                     json.dumps(blocks, indent=2, ensure_ascii=False) + "\n",
                 )
 

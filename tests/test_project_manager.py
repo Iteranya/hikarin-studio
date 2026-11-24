@@ -26,22 +26,25 @@ def temp_root(tmp_path, monkeypatch):
 @pytest.fixture
 def pack(temp_root):
     store.create_project("touhou", {"packName": "Touhou Pack"})
-    store.create_story("touhou", "cupa", {"character": "cupa"})
+    store.create_script("touhou", "cupa", "main", {"character": "cupa"})
     return "touhou"
 
 
 # ── project-level management ────────────────────────────────────────────────
 
 
-def test_duplicate_project_copies_every_story(pack, temp_root):
-    store.create_story("touhou", "reimu", {"character": "reimu"})
+def test_duplicate_project_copies_every_script(pack, temp_root):
+    store.create_script("touhou", "reimu", "main", {"character": "reimu"})
 
     dup = store.duplicate_project("touhou", "touhou-copy")
     assert dup["slug"] == "touhou-copy"
     assert (temp_root / "touhou-copy" / "project.json").is_file()
-    assert (temp_root / "touhou-copy" / "stories" / "cupa" / "main.story").is_file()
-    assert (temp_root / "touhou-copy" / "stories" / "reimu" / "main.story").is_file()
-    assert [s["slug"] for s in dup["stories"]] == ["cupa", "reimu"]
+    assert (temp_root / "touhou-copy" / "stories" / "cupa" / "main" / "main.story").is_file()
+    assert (temp_root / "touhou-copy" / "stories" / "reimu" / "main" / "main.story").is_file()
+    assert {f'{s["character"]}/{s["script"]}' for s in dup["scripts"]} == {
+        "cupa/main",
+        "reimu/main",
+    }
 
     with pytest.raises(store.ProjectError):
         store.duplicate_project("touhou", "touhou-copy")
@@ -52,47 +55,39 @@ def test_rename_project_moves_folder(pack, temp_root):
     assert r["slug"] == "moriya"
     assert not (temp_root / "touhou").exists()
     assert (temp_root / "moriya" / "project.json").is_file()
-    assert (temp_root / "moriya" / "stories" / "cupa" / "main.story").is_file()
+    assert (temp_root / "moriya" / "stories" / "cupa" / "main" / "main.story").is_file()
 
 
-def test_delete_project_removes_every_story(pack, temp_root):
-    store.create_story("touhou", "reimu")
+def test_delete_project_removes_every_script(pack, temp_root):
+    store.create_script("touhou", "reimu", "main", {"character": "reimu"})
     store.delete_project("touhou")
     assert not (temp_root / "touhou").exists()
 
 
-# ── story-level management ──────────────────────────────────────────────────
+# ── script-level management ─────────────────────────────────────────────────
 
 
-def test_duplicate_story(pack, temp_root):
-    dup = store.duplicate_story("touhou", "cupa", "cupa2")
-    assert dup["slug"] == "cupa2"
-    assert dup["meta"]["character"] == "cupa2", "a duplicate is its own story"
-    assert (temp_root / "touhou" / "stories" / "cupa2" / "main.story").is_file()
+def test_duplicate_script(pack, temp_root):
+    dup = store.duplicate_script("touhou", "cupa", "main", "alt")
+    assert dup["script"] == "alt"
+    assert dup["meta"]["character"] == "cupa"
+    assert (temp_root / "touhou" / "stories" / "cupa" / "alt" / "main.story").is_file()
 
 
-def test_rename_story(pack, temp_root):
-    renamed = store.rename_story("touhou", "cupa", "cirno")
-    assert not (temp_root / "touhou" / "stories" / "cupa").exists()
-    assert (temp_root / "touhou" / "stories" / "cirno" / "story.json").is_file()
-    assert [s["slug"] for s in store.list_projects()[0]["stories"]] == ["cirno"]
-    # The character was the folder name, so it follows: the story still exports
-    # under the name you just gave it.
-    assert renamed["meta"]["character"] == "cirno"
+def test_rename_script(pack, temp_root):
+    renamed = store.rename_script("touhou", "cupa", "main", "intro")
+    assert not (temp_root / "touhou" / "stories" / "cupa" / "main").exists()
+    assert (temp_root / "touhou" / "stories" / "cupa" / "intro" / "story.json").is_file()
+    assert [f'{s["character"]}/{s["script"]}' for s in store.load_project("touhou")["scripts"]] == [
+        "cupa/intro"
+    ]
+    assert renamed["script"] == "intro"
 
 
-def test_rename_story_keeps_a_deliberate_character(pack, temp_root):
-    """A character name the author chose is a decision, not a default."""
-    store.save_story("touhou", "cupa", {"character": "sakuya"}, {"main.story": []})
-    renamed = store.rename_story("touhou", "cupa", "sakuya_route")
-    assert renamed["meta"]["character"] == "sakuya", "an explicit trigger survives a rename"
-    assert renamed["slug"] == "sakuya_route"
-
-
-def test_rename_story_never_touches_blocks(pack, temp_root):
+def test_rename_script_keeps_blocks_byte_for_byte(pack, temp_root):
     """Renaming is a folder move, not a rewrite.
 
-    The story's blocks must survive a rename byte-for-byte. Doing this through
+    The script's blocks must survive a rename byte-for-byte. Doing this through
     the save endpoint instead would re-upload every file, and an empty or
     partial upload would silently destroy the script.
     """
@@ -101,37 +96,45 @@ def test_rename_story_never_touches_blocks(pack, temp_root):
         {"kind": "say", "data": {"label": "Cupa", "content": "Do not lose me."}},
         {"kind": "end", "data": {}},
     ]
-    store.save_story("touhou", "cupa", {"character": "cupa"}, {"main.story": blocks})
+    store.save_script("touhou", "cupa", "main", {"character": "cupa"}, {"main.story": blocks})
 
-    store.rename_story("touhou", "cupa", "cupa_main", character="cupa")
-    after = store.load_story("touhou", "cupa_main")
+    store.rename_script("touhou", "cupa", "main", "intro")
+    after = store.load_script("touhou", "cupa", "intro")
     assert after["files"]["main.story"] == blocks, "renaming must not rewrite the script"
 
 
-def test_rename_story_can_set_a_different_character(pack, temp_root):
-    """The character is independent of the folder name, and one call sets both."""
+def test_rename_script_can_move_to_another_character(pack, temp_root):
+    """A script can move under a different character in one call."""
     blocks = [{"kind": "label", "data": {"name": "start"}}]
-    store.save_story("touhou", "cupa", {"character": "cupa"}, {"main.story": blocks})
+    store.save_script("touhou", "cupa", "main", {"character": "cupa"}, {"main.story": blocks})
 
-    store.rename_story("touhou", "cupa", "cupa_alt", character="sakuya")
-    after = store.load_story("touhou", "cupa_alt")
-    assert after["slug"] == "cupa_alt"
+    store.rename_script("touhou", "cupa", "main", "main", new_character="sakuya")
+    # cupa now has no scripts, so its folder is gone.
+    assert not (temp_root / "touhou" / "stories" / "cupa").exists()
+    after = store.load_script("touhou", "sakuya", "main")
     assert after["meta"]["character"] == "sakuya"
     assert after["files"]["main.story"] == blocks
 
 
-def test_delete_story_leaves_the_project(pack, temp_root):
-    store.delete_story("touhou", "cupa")
+def test_delete_script_leaves_the_project(pack, temp_root):
+    store.delete_script("touhou", "cupa", "main")
     assert not (temp_root / "touhou" / "stories" / "cupa").exists()
     assert (temp_root / "touhou" / "project.json").is_file()
-    assert store.load_project("touhou")["stories"] == []
+    assert store.load_project("touhou")["scripts"] == []
 
 
-def test_delete_story_leaves_shared_assets(pack, temp_root):
-    """Assets belong to the pack, so removing a story must not remove the art."""
+def test_delete_script_leaves_shared_assets(pack, temp_root):
+    """Assets belong to the pack, so removing a script must not remove the art."""
     (temp_root / "touhou" / "images" / "asset" / "end.png").write_bytes(b"x")
-    store.delete_story("touhou", "cupa")
+    store.delete_script("touhou", "cupa", "main")
     assert (temp_root / "touhou" / "images" / "asset" / "end.png").is_file()
+
+
+def test_delete_character_removes_every_script(pack, temp_root):
+    store.create_script("touhou", "cupa", "night", {"character": "cupa"})
+    store.delete_character("touhou", "cupa")
+    assert not (temp_root / "touhou" / "stories" / "cupa").exists()
+    assert store.load_project("touhou")["scripts"] == []
 
 
 # ── bundle import ───────────────────────────────────────────────────────────
@@ -139,16 +142,16 @@ def test_delete_story_leaves_shared_assets(pack, temp_root):
 
 def test_import_bundle_roundtrip(pack, temp_root):
     project = store.load_project("touhou")
-    stories = {}
-    for summary in project["stories"]:
-        loaded = store.load_story("touhou", summary["slug"])
-        stories[summary["slug"]] = (loaded["meta"], loaded["files"])
+    raw = {}
+    for summary in project["scripts"]:
+        loaded = store.load_script("touhou", summary["character"], summary["script"])
+        raw[f'{summary["character"]}/{summary["script"]}'] = (loaded["meta"], loaded["files"])
 
-    bundle = build_project_bundle(project["meta"], stories, temp_root / "touhou")
+    bundle = build_project_bundle(project["meta"], raw, temp_root / "touhou")
     imported = store.import_project_zip("touhou-imported", bundle)
 
     assert imported["slug"] == "touhou-imported"
-    assert [s["slug"] for s in imported["stories"]] == ["cupa"]
+    assert [f'{s["character"]}/{s["script"]}' for s in imported["scripts"]] == ["cupa/main"]
 
 
 def test_import_rejects_bad_zip(temp_root):
@@ -156,11 +159,11 @@ def test_import_rejects_bad_zip(temp_root):
         store.import_project_zip("bad", b"not a zip")
 
 
-# ── single-story export formats ─────────────────────────────────────────────
+# ── single-script export formats ────────────────────────────────────────────
 
 
 def _compiled():
-    meta = {"character": "cupa", "packName": "Cupa's Story"}
+    meta = {"character": "cupa", "script": "main", "packName": "Cupa's Story"}
     files = {"main.story": [
         {"kind": "label", "data": {"name": "start"}},
         {"kind": "say", "data": {"label": "Cupa", "content": "Oh hey!"}},

@@ -22,7 +22,7 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   meta: null,              // block definitions from /api/meta
-  project: null,           // the open story: { slug, projectSlug, meta, files, assets }
+  project: null,           // the open script: { character, script, projectSlug, meta, files, assets }
   activeFile: null,
   selected: null,          // { file, index }
   dirty: false,
@@ -97,13 +97,14 @@ async function boot() {
 async function openFromLocation() {
   const params = new URLSearchParams(window.location.search);
   const project = params.get('project');
-  const story = params.get('story');
+  const character = params.get('character');
+  const script = params.get('script');
 
-  if (project && story) {
-    const opened = await openStory(project, story);
+  if (project && character && script) {
+    const opened = await openScript(project, character, script);
     if (opened) return;
-    // The story was renamed or deleted under us. Fall through to the empty
-    // state instead of leaving the last story's blocks on screen.
+    // The script was renamed or deleted under us. Fall through to the empty
+    // state instead of leaving the last script's blocks on screen.
   }
 
   showNothingOpen();
@@ -139,8 +140,8 @@ function showNothingOpen() {
   if (!empty) return;
   empty.hidden = false;
   empty.innerHTML =
-    '<p class="empty-title">No story open</p>' +
-    '<p class="empty-hint">Projects and stories live in the manager. ' +
+    '<p class="empty-title">No script open</p>' +
+    '<p class="empty-hint">Projects, characters and scripts live in the manager. ' +
     '<button class="btn tiny" id="empty-open-manager">Open the manager</button></p>';
   const btn = $('empty-open-manager');
   if (btn) btn.onclick = openManager;
@@ -187,20 +188,20 @@ function onAssetsChanged() {
 }
 
 /**
- * Open one story, and put it in the URL.
+ * Open one script, and put it in the URL.
  *
- * Whatever is on screen has to be on disk before the next story's files are
- * read, or an autosave can land on the story you just left.
+ * Whatever is on screen has to be on disk before the next script's files are
+ * read, or an autosave can land on the script you just left.
  */
-async function openStory(projectSlug, storySlug) {
+async function openScript(projectSlug, character, script) {
   if (state.project) await flushAutosave();
 
   const res = await fetch(
-    `/api/projects/${encodeURIComponent(projectSlug)}/stories/${encodeURIComponent(storySlug)}`
+    `/api/projects/${encodeURIComponent(projectSlug)}/scripts/${encodeURIComponent(character)}/${encodeURIComponent(script)}`
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    setStatus('compile', err.detail || 'Could not open that story', 'error');
+    setStatus('compile', err.detail || 'Could not open that script', 'error');
     return false;
   }
 
@@ -212,11 +213,12 @@ async function openStory(projectSlug, storySlug) {
 
   const url = new URL(window.location.href);
   url.searchParams.set('project', projectSlug);
-  url.searchParams.set('story', storySlug);
+  url.searchParams.set('character', character);
+  url.searchParams.set('script', script);
   window.history.replaceState({}, '', url);
 
-  $('project-character').textContent = projectSlug;
-  $('project-character').title = `Project: ${projectSlug}`;
+  $('project-character').textContent = character;
+  $('project-character').title = `Character: ${character} · Script: ${script}`;
   renderStorySwitch();
   $('btn-play').disabled = false;
   $('btn-export').disabled = false;
@@ -317,49 +319,49 @@ function renderPalette() {
   }
 }
 
-// ── story switcher ──────────────────────────────────────────────────────────
+// ── script switcher ─────────────────────────────────────────────────────────
 //
-// The top bar answers "which story am I editing?". A project is a pack holding
-// several stories, and switching between them should not cost a trip to the
-// manager and back.
+// The top bar answers "which script am I editing?". Scripts are grouped under
+// their character, so the options are `<character>/<script>` — the character
+// prefix is what tells two scripts named "main" apart.
 //
-// The list comes from the server with the story payload (`siblings`), so
-// opening a story already knows its neighbours and this renders with no extra
-// request. A new story is created through the manager, which owns structure.
+// The list comes from the server with the script payload (`siblings`), so
+// opening a script already knows its neighbours and this renders with no extra
+// request. New scripts are created through the manager, which owns structure.
 
 function renderStorySwitch() {
   const select = $('story-select');
   if (!select) return;
 
-  const current = state.project?.slug;
+  const current = state.project;
   const projectSlug = state.project?.projectSlug;
 
   if (!current || !projectSlug) {
-    select.innerHTML = '<option value="">no story open</option>';
+    select.innerHTML = '<option value="">no script open</option>';
     select.value = '';
     select.disabled = true;
     return;
   }
 
-  const stories = [
-    { slug: current, character: state.project.meta?.character || current },
+  const curChar = current.character;
+  const curScript = current.script;
+  const key = (c, s) => `${c}/${s}`;
+
+  const scripts = [
+    { character: curChar, script: curScript },
     ...(state.project.siblings ?? []),
-  ].sort((a, b) => a.slug.localeCompare(b.slug));
+  ].sort((a, b) => key(a.character, a.script).localeCompare(key(b.character, b.script)));
 
   select.innerHTML = '';
-  for (const s of stories) {
+  for (const s of scripts) {
     const opt = document.createElement('option');
-    opt.value = s.slug;
-    // Show the character when it differs from the folder, because that is the
-    // name the story exports as — the thing an author actually recognises.
-    opt.textContent = s.character && s.character !== s.slug
-      ? `${s.character}  ·  ${s.slug}`
-      : s.slug;
-    opt.selected = s.slug === current;
+    opt.value = key(s.character, s.script);
+    opt.textContent = key(s.character, s.script);
+    opt.selected = s.character === curChar && s.script === curScript;
     select.appendChild(opt);
   }
   select.disabled = false;
-  select.title = `Switch story in ${projectSlug}`;
+  select.title = `Switch script in ${projectSlug}`;
 }
 
 // ── tabs ────────────────────────────────────────────────────────────────────
@@ -2000,10 +2002,11 @@ function wireChrome() {
   $('story-select').onchange = (e) => {
     const next = e.target.value;
     if (!next || !state.project) return;
-    if (next === state.project.slug) return;
-    // openStory() flushes the outgoing story before reading the next one, so
+    const [character, script] = next.split('/');
+    if (character === state.project.character && script === state.project.script) return;
+    // openScript() flushes the outgoing script before reading the next one, so
     // switching mid-edit cannot lose the last keystrokes.
-    openStory(state.project.projectSlug, next);
+    openScript(state.project.projectSlug, character, script);
   };
 
   // Last line of defence: the tab is closing mid-edit, before the debounce
@@ -2015,7 +2018,7 @@ function wireChrome() {
     const blob = new Blob([JSON.stringify(saveBody())], { type: 'application/json' });
     if (blob.size > 60000) return;
     fetch(
-      `/api/projects/${encodeURIComponent(state.project.projectSlug)}/stories/${encodeURIComponent(state.project.slug)}`,
+      `/api/projects/${encodeURIComponent(state.project.projectSlug)}/scripts/${encodeURIComponent(state.project.character)}/${encodeURIComponent(state.project.script)}`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -2078,7 +2081,7 @@ async function save({ silent = false } = {}) {
   autosave.inFlight = (async () => {
     try {
       const res = await fetch(
-        `/api/projects/${encodeURIComponent(project.projectSlug)}/stories/${encodeURIComponent(project.slug)}`,
+        `/api/projects/${encodeURIComponent(project.projectSlug)}/scripts/${encodeURIComponent(project.character)}/${encodeURIComponent(project.script)}`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -2137,7 +2140,7 @@ async function validate() {
   setStatus('compile', 'compiling…');
 
   const res = await fetch(
-    `/api/projects/${encodeURIComponent(state.project.projectSlug)}/stories/${encodeURIComponent(state.project.slug)}/compile`
+    `/api/projects/${encodeURIComponent(state.project.projectSlug)}/scripts/${encodeURIComponent(state.project.character)}/${encodeURIComponent(state.project.script)}/compile`
   );
   const result = await res.json();
   state.lastCompile = result;
@@ -2165,7 +2168,7 @@ async function exportStory() {
   if (!state.project) return;
   if (state.dirty) { await save(); }
   const fmt = document.getElementById('export-format')?.value || 'json';
-  window.location = `/api/projects/${encodeURIComponent(state.project.projectSlug)}/stories/${encodeURIComponent(state.project.slug)}/export?format=${encodeURIComponent(fmt)}`;
+  window.location = `/api/projects/${encodeURIComponent(state.project.projectSlug)}/scripts/${encodeURIComponent(state.project.character)}/${encodeURIComponent(state.project.script)}/export?format=${encodeURIComponent(fmt)}`;
 }
 
 /** Back to the manager, where stories and projects actually get managed. */
@@ -2194,7 +2197,7 @@ async function play() {
     await flushAutosave();
   }
   window.open(
-    `play.html?project=${encodeURIComponent(state.project.projectSlug)}&story=${encodeURIComponent(state.project.slug)}`,
+    `play.html?project=${encodeURIComponent(state.project.projectSlug)}&character=${encodeURIComponent(state.project.character)}&script=${encodeURIComponent(state.project.script)}`,
     '_blank'
   );
 }

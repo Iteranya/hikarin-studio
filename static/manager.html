@@ -71,9 +71,9 @@
         <input type="text" id="pf-desc" class="input" placeholder="Made with Hikarin Studio" autocomplete="off">
       </label>
       <label class="field" id="pf-story-field">
-        <span class="field-label">First story</span>
+        <span class="field-label">First character</span>
         <input type="text" id="pf-story" class="input" placeholder="cupa" autocomplete="off">
-        <span class="field-hint">The first story in this pack. You can add more later.</span>
+        <span class="field-hint">The first character in this pack, with one starter script named <code>main</code>. You can add more later.</span>
       </label>
       <p class="dialog-error" id="pf-error" hidden></p>
     </div>
@@ -120,12 +120,12 @@
       <label class="field">
         <span class="field-label">Character</span>
         <input type="text" id="sf-character" class="input" placeholder="cupa" autocomplete="off">
-        <span class="field-hint">Whose script this is. It becomes the file name the story exports as, so it must be lowercase with no spaces.</span>
+        <span class="field-hint">One in-game person. Becomes the folder under <code>stories/</code> that groups their scripts. Lowercase, no spaces.</span>
       </label>
       <label class="field">
-        <span class="field-label">Story name</span>
-        <input type="text" id="sf-slug" class="input" placeholder="cupa" autocomplete="off">
-        <span class="field-hint">The folder under <code>stories/</code>. Defaults to the character name; change it only if one story needs two scripts.</span>
+        <span class="field-label">Script</span>
+        <input type="text" id="sf-slug" class="input" placeholder="main" autocomplete="off">
+        <span class="field-hint">One conversation. The folder under the character. Two characters can each have a script with this same name.</span>
       </label>
       <p class="dialog-error" id="sf-error" hidden></p>
     </div>

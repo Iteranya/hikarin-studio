@@ -1,17 +1,18 @@
 """Project storage: a folder on disk is a project.
 
-A **project** is a resource pack. A **story** is one character's script inside it.
-The distinction is not cosmetic — the engine reads one JSON file per character,
-keyed by the trigger (the story's lowercased name)::
+A **project** is a resource pack. Inside it, a **character** is one in-game
+person, and a **script** is one of that character's conversations. A script is
+made of one or more ``.story`` files (tabs). Four levels::
 
     projects/<project>/
         project.json            pack name, description
         stories/
-            <story>/
-                story.json      character (the trigger), start label, file order
-                main.story      the spine
-                night.story
-                idle.story      forty idle lines get their own tab
+            <character>/        one folder per character (a person)
+                <script>/       one folder per script (a conversation)
+                    story.json  character, start label, file order
+                    main.story  the spine
+                    night.story
+                    idle.story  forty idle lines get their own tab
         images/                 shared sprites and backgrounds
             pack.png            the resource pack icon
             characters/
@@ -24,19 +25,26 @@ keyed by the trigger (the story's lowercased name)::
             music/              haggstrom.ogg
             sound/              teleport.ogg
 
-Three levels: project → story → ``.story`` files. A project with one story and a
-project with six are the same shape, which is the point: adding a story must not
-mean restructuring anything.
+A project with one character and a project with six are the same shape, and so
+is a character with one script versus six: adding either must not mean
+restructuring anything. The character folder is what groups a person's
+conversations together; the script folder is one conversation, built from its
+own ``.story`` tabs.
 
-``images/`` and ``sounds/`` are shared by every story in the project. That is
-what makes a pack a pack — the art is loaded once and every script refers to it.
-``images/`` maps to ``textures/`` on export; that is the only rename. Sounds map
-one-to-one. Scripts are generated, never hand-edited.
+``story.json`` keeps its ``character`` field even though the parent folder
+already names the character: the manifest is what the editor and the exporter
+read, and duplicating the name there keeps a script self-describing when it is
+moved between folders.
+
+``images/`` and ``sounds/`` are shared by every script in the project. That is
+what makes a pack a pack — the art is loaded once and every script refers to
+it. ``images/`` maps to ``textures/`` on export; that is the only rename.
+Sounds map one-to-one. Scripts are generated, never hand-edited.
 
 ``.story`` files are JSON arrays of editor blocks, without ids. The compiler
 assigns ids, so reordering blocks never causes a numbering conflict. Labels are
-scoped to a story: a Jump in ``main.story`` can reach a label in ``night.story``,
-but never a label in another story's script.
+scoped to a script: a Jump in ``main.story`` can reach a label in
+``night.story``, but never a label in another script.
 
 The SDK's own note on sprite layout::
 
@@ -118,9 +126,16 @@ def stories_root(slug: str) -> Path:
     return project_dir(slug) / STORIES_DIRNAME
 
 
-def story_dir(slug: str, story: str) -> Path:
-    _check_slug(story)
-    return stories_root(slug) / story
+def character_dir(slug: str, character: str) -> Path:
+    """The folder holding one character's scripts."""
+    _check_slug(character)
+    return stories_root(slug) / character
+
+
+def script_dir(slug: str, character: str, script: str) -> Path:
+    """One script's folder: ``stories/<character>/<script>/``."""
+    _check_slug(script)
+    return character_dir(slug, character) / script
 
 
 # ── reading ─────────────────────────────────────────────────────────────────
@@ -138,9 +153,8 @@ def _read_json(path: Path, what: str) -> dict[str, Any]:
     return data
 
 
-def _story_names(path: Path) -> list[str]:
-    """Story slugs on disk, sorted. A folder without story.json is not a story."""
-    root = path / STORIES_DIRNAME
+def _dir_with_manifests(root: Path) -> list[str]:
+    """Child folders of ``root`` that hold a story.json, sorted."""
     if not root.is_dir():
         return []
     return sorted(
@@ -150,15 +164,32 @@ def _story_names(path: Path) -> list[str]:
     )
 
 
-def _safe_story_field(project_path: Path, story: str, key: str) -> str:
-    """Read one string field from a story.json, tolerating a broken one."""
-    target = project_path / STORIES_DIRNAME / story / "story.json"
-    try:
-        meta = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-    value = meta.get(key) if isinstance(meta, dict) else None
-    return value if isinstance(value, str) else ""
+def _character_names(path: Path) -> list[str]:
+    """Character folders on disk, sorted.
+
+    A character folder is any subfolder of ``stories/`` that contains at least
+    one script folder (a child holding a story.json). An empty or stray folder
+    is not a character.
+    """
+    root = path / STORIES_DIRNAME
+    if not root.is_dir():
+        return []
+    names = []
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        if any(
+            child.is_dir() and (child / "story.json").is_file()
+            for child in entry.iterdir()
+        ):
+            names.append(entry.name)
+    return sorted(names)
+
+
+def _script_names(path: Path, character: str) -> list[str]:
+    """Script folders for one character, sorted. A folder without story.json is
+    not a script."""
+    return _dir_with_manifests(path / STORIES_DIRNAME / character)
 
 
 def _count_blocks(path: Path, meta: dict[str, Any]) -> int:
@@ -176,13 +207,18 @@ def _count_blocks(path: Path, meta: dict[str, Any]) -> int:
     return total
 
 
-def _story_summary(project_path: Path, story: str) -> dict[str, Any]:
-    """One story's metadata, without reading every block."""
-    path = project_path / STORIES_DIRNAME / story
-    meta = _read_json(path / "story.json", f"stories/{story}/story.json")
+def _script_summary(project_path: Path, character: str, script: str) -> dict[str, Any]:
+    """One script's metadata, without reading every block.
+
+    ``character`` is the folder the script lives in — the source of truth. The
+    manifest's own ``character`` field is a fallback for an older script that
+    predates the character folder, but the folder wins when both exist.
+    """
+    path = project_path / STORIES_DIRNAME / character / script
+    meta = _read_json(path / "story.json", f"stories/{character}/{script}/story.json")
     return {
-        "slug": story,
-        "character": meta.get("character") or story,
+        "character": character,
+        "script": script,
         "description": meta.get("description") or "",
         "startLabel": meta.get("startLabel") or "start",
         "files": list(meta.get("files") or []),
@@ -190,11 +226,37 @@ def _story_summary(project_path: Path, story: str) -> dict[str, Any]:
     }
 
 
+def _character_summaries(project_path: Path) -> list[dict[str, Any]]:
+    """Every character in a project, each with its scripts.
+
+    This is the shape the manager renders: a character is a group, and its
+    scripts are the entries inside it.
+    """
+    characters: list[dict[str, Any]] = []
+    for character in _character_names(project_path):
+        scripts = [
+            _script_summary(project_path, character, script)
+            for script in _script_names(project_path, character)
+        ]
+        characters.append({"character": character, "scripts": scripts})
+    return characters
+
+
+def _all_script_refs(project_path: Path) -> list[dict[str, str]]:
+    """Flat ``[{character, script}]`` for every script, for the story switcher."""
+    refs: list[dict[str, str]] = []
+    for character in _character_names(project_path):
+        for script in _script_names(project_path, character):
+            refs.append({"character": character, "script": script})
+    return refs
+
+
 def list_projects() -> list[dict[str, Any]]:
-    """Every project folder under the projects root, with its story list.
+    """Every project folder under the projects root, with its character list.
 
     Metadata only: the manager page draws this to render a list, and parsing
-    every block of every script to do that is how a launcher gets slow.
+    every block of every script to do that is how a launcher gets slow. Counts
+    are derived from the tree so the caller never has to.
     """
     if not PROJECTS_ROOT.is_dir():
         return []
@@ -211,35 +273,29 @@ def list_projects() -> list[dict[str, Any]]:
             continue
         if not isinstance(meta, dict):
             continue
-        stories = [
-            {
-                "slug": name,
-                "character": _safe_story_field(entry, name, "character") or name,
-            }
-            for name in _story_names(entry)
-        ]
+        characters = _character_summaries(entry)
+        script_count = sum(len(c["scripts"]) for c in characters)
         found.append(
             {
                 "slug": entry.name,
                 "packName": meta.get("packName") or entry.name,
                 "description": meta.get("description", ""),
-                "storyCount": len(stories),
-                "stories": stories,
+                "characterCount": len(characters),
+                "scriptCount": script_count,
+                # Kept for the flat story-count chip some callers still read.
+                "storyCount": script_count,
+                "characters": characters,
             }
         )
     return found
 
 
-def _story_summaries(project_path: Path) -> list[dict[str, Any]]:
-    """Every story in a project folder, as summaries."""
-    return [_story_summary(project_path, name) for name in _story_names(project_path)]
-
-
 def load_project(slug: str) -> dict[str, Any]:
-    """A project and every story in it.
+    """A project, its characters, and every script inside them.
 
-    Returns ``{"slug", "meta", "stories": [{slug, character, description,
-    startLabel, files, blockCount}]}``.
+    Returns ``{"slug", "meta", "characters": [{character, scripts: [{character,
+    script, description, startLabel, files, blockCount}]}], "scripts": [...]}``
+    where ``scripts`` is the flat list (handy for a switcher).
     """
     path = project_dir(slug)
     meta_file = path / "project.json"
@@ -247,21 +303,34 @@ def load_project(slug: str) -> dict[str, Any]:
         raise ProjectError(f"Project '{slug}' has no project.json")
 
     meta = _read_json(meta_file, "project.json")
-    stories = _story_summaries(path)
-    meta["stories"] = [s["slug"] for s in stories]
+    characters = _character_summaries(path)
+    flat = [s for c in characters for s in c["scripts"]]
 
-    return {"slug": slug, "meta": meta, "stories": stories}
+    # project.json's own "stories" mirror is kept flat for any external reader,
+    # but the tree above is the truth the app uses.
+    meta["stories"] = [f'{s["character"]}/{s["script"]}' for s in flat]
+
+    return {
+        "slug": slug,
+        "meta": meta,
+        "characters": characters,
+        "scripts": flat,
+    }
 
 
-def load_story(slug: str, story: str) -> dict[str, Any]:
-    """Read one story and all its ``.story`` files.
+def load_script(slug: str, character: str, script: str) -> dict[str, Any]:
+    """Read one script and all its ``.story`` files.
 
-    Returns ``{"slug", "projectSlug", "meta", "files": {name: [block]},
-    "assets": [...]}``. Assets are project-level, but they ride along because
-    every picker in the inspector reads them.
+    Returns ``{"character", "script", "projectSlug", "meta", "files": {name:
+    [block]}, "assets": [...], "variables": {...}, "siblings": [...]}``. Assets
+    and variables are project-level, but they ride along because every picker in
+    the inspector reads them; siblings are the other scripts in the project, so
+    the editor's switcher draws with no second request.
     """
-    path = _require_story_manifest(slug, story)
-    meta = _read_json(path / "story.json", f"stories/{story}/story.json")
+    path = _require_script_manifest(slug, character, script)
+    meta = _read_json(
+        path / "story.json", f"stories/{character}/{script}/story.json"
+    )
 
     names = list(meta.get("files") or [])
     # Include any .story file on disk that story.json forgot about.
@@ -285,45 +354,56 @@ def load_story(slug: str, story: str) -> dict[str, Any]:
         files[name] = data
 
     meta["files"] = names
+    # The folder is the source of truth for the character; keep the manifest in
+    # step so it round-trips correctly, but do not let a stale field override it.
+    meta["character"] = character
+
     return {
-        "slug": story,
+        "character": character,
+        "script": script,
         "projectSlug": slug,
         "meta": meta,
         "files": files,
         "assets": list_assets(project_dir(slug)),
         # The project's declared variables. Every variable field in the inspector
-        # picks from this, so opening a story must already know them — one more
-        # request per story open would be a request per keystroke's undo.
+        # picks from this, so opening a script must already know them — one more
+        # request per script open would be a request per keystroke's undo.
         "variables": load_variables(project_dir(slug)),
-        # The other stories in this project, so the editor's story switcher can
-        # be drawn without a second request. This story is included; the caller
+        # Every other script in this project, so the editor's switcher can be
+        # drawn without a second request. This script is included; the caller
         # marks which one is current.
         "siblings": [
-            s for s in _story_summaries(project_dir(slug)) if s["slug"] != story
+            s
+            for s in _all_script_refs(project_dir(slug))
+            if not (s["character"] == character and s["script"] == script)
         ],
     }
 
 
-def _require_story(slug: str, story: str) -> Path:
-    """The story folder, which must already exist.
+def _require_script(slug: str, character: str, script: str) -> Path:
+    """The script folder, which must already exist.
 
-    Only the folder is required, not the manifest: creating a story makes the
+    Only the folder is required, not the manifest: creating a script makes the
     folder and then writes its first manifest through the same path the editor
     saves through. Requiring ``story.json`` here would mean create cannot use
-    its own writer. A save into a deleted story still fails, because the folder
+    its own writer. A save into a deleted script still fails, because the folder
     goes with it — that is the invariant that matters.
     """
-    path = story_dir(slug, story)
+    path = script_dir(slug, character, script)
     if not path.is_dir():
-        raise ProjectError(f"Story '{story}' does not exist in '{slug}'")
+        raise ProjectError(
+            f"Script '{character}/{script}' does not exist in '{slug}'"
+        )
     return path
 
 
-def _require_story_manifest(slug: str, story: str) -> Path:
-    """The story folder, which must have a readable story.json."""
-    path = _require_story(slug, story)
+def _require_script_manifest(slug: str, character: str, script: str) -> Path:
+    """The script folder, which must have a readable story.json."""
+    path = _require_script(slug, character, script)
     if not (path / "story.json").is_file():
-        raise ProjectError(f"Story '{story}' has no story.json")
+        raise ProjectError(
+            f"Script '{character}/{script}' has no story.json"
+        )
     return path
 
 
@@ -348,16 +428,20 @@ def save_project_meta(slug: str, meta: dict[str, Any]) -> dict[str, Any]:
     return load_project(slug)
 
 
-def save_story(
-    slug: str, story: str, meta: dict[str, Any], files: dict[str, list[dict]]
+def save_script(
+    slug: str,
+    character: str,
+    script: str,
+    meta: dict[str, Any],
+    files: dict[str, list[dict]],
 ) -> dict[str, Any]:
-    """Write story.json and every ``.story`` file.
+    """Write story.json and every ``.story`` file for one script.
 
     Files removed from ``files`` are deleted from disk, so deleting a tab in the
     editor actually removes the file rather than leaving an orphan that would be
     re-discovered on next load.
     """
-    path = _require_story(slug, story)
+    path = _require_script(slug, character, script)
 
     existing = {p.relative_to(path).as_posix() for p in path.rglob("*.story")}
     for gone in existing - set(files):
@@ -376,8 +460,11 @@ def save_story(
 
     clean = {k: v for k, v in meta.items() if k != "files"}
     clean["files"] = list(files)
+    # The parent folder is the source of truth for the character; keep the
+    # manifest's own field in step so it round-trips correctly.
+    clean["character"] = character
     _write_json(path / "story.json", clean)
-    return load_story(slug, story)
+    return load_script(slug, character, script)
 
 
 # ── create / delete / duplicate / rename ────────────────────────────────────
@@ -451,28 +538,38 @@ def create_project(slug: str, meta: dict[str, Any] | None = None) -> dict[str, A
     return load_project(slug)
 
 
-def create_story(
-    slug: str, story: str, meta: dict[str, Any] | None = None
+def create_script(
+    slug: str,
+    character: str,
+    script: str,
+    meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """A story is a folder with a manifest and one starter ``.story`` file."""
+    """A script is a folder under its character with a manifest and one starter
+    ``.story`` file.
+
+    Uniqueness is on the ``(character, script)`` pair, so the same script name
+    can exist under two different characters without colliding.
+    """
     if not project_dir(slug).is_dir():
         raise ProjectError(f"Project '{slug}' does not exist")
 
-    path = story_dir(slug, story)
+    path = script_dir(slug, character, script)
     if path.exists() and any(path.iterdir()):
-        raise ProjectError(f"Story '{story}' already exists")
+        raise ProjectError(
+            f"Script '{character}/{script}' already exists"
+        )
 
     merged = dict(DEFAULT_STORY)
     if meta:
         merged.update({k: v for k, v in meta.items() if k != "files"})
-    merged["character"] = merged.get("character") or story
+    merged["character"] = character
 
-    # save_story() refuses to invent a story folder — it writes into one that
-    # is already there, so a save can never resurrect a deleted story. Creating
-    # one means making the folder first, then handing it to the same writer the
+    # save_script() refuses to invent a script folder — it writes into one that
+    # is already there, so a save can never resurrect a deleted script. Creating
+    # one means making the folders first, then handing it to the same writer the
     # editor uses.
     path.mkdir(parents=True, exist_ok=True)
-    return save_story(slug, story, merged, _default_blocks(merged["character"]))
+    return save_script(slug, character, script, merged, _default_blocks(character))
 
 
 def delete_project(slug: str) -> None:
@@ -482,8 +579,26 @@ def delete_project(slug: str) -> None:
     shutil.rmtree(path)
 
 
-def delete_story(slug: str, story: str) -> None:
-    path = _require_story(slug, story)
+def delete_script(slug: str, character: str, script: str) -> None:
+    path = _require_script(slug, character, script)
+    shutil.rmtree(path)
+    # If the character has no scripts left, drop its now-empty folder too, so
+    # the tree never carries an empty character group.
+    char_path = character_dir(slug, character)
+    if char_path.is_dir() and not any(char_path.iterdir()):
+        try:
+            char_path.rmdir()
+        except OSError:
+            pass
+
+
+def delete_character(slug: str, character: str) -> None:
+    """Remove a character and every script under it."""
+    path = character_dir(slug, character)
+    if not path.is_dir():
+        raise ProjectError(
+            f"Character '{character}' does not exist in '{slug}'"
+        )
     shutil.rmtree(path)
 
 
@@ -509,65 +624,106 @@ def rename_project(slug: str, new_slug: str) -> dict[str, Any]:
     return load_project(new_slug)
 
 
-def duplicate_story(slug: str, story: str, new_story: str) -> dict[str, Any]:
-    src = _require_story(slug, story)
-    dest = story_dir(slug, new_story)
-    if dest.exists() and any(dest.iterdir()):
-        raise ProjectError(f"Story '{new_story}' already exists")
-    shutil.copytree(src, dest)
-    meta = _read_json(dest / "story.json", f"stories/{new_story}/story.json")
-    meta["character"] = new_story
-    _write_json(dest / "story.json", meta)
-    return load_story(slug, new_story)
-
-
-def rename_story(
-    slug: str, story: str, new_story: str, character: str | None = None
+def duplicate_script(
+    slug: str,
+    character: str,
+    script: str,
+    new_script: str,
+    new_character: str | None = None,
 ) -> dict[str, Any]:
-    """Move a story folder, and optionally change its character.
+    """Copy a script folder to a new script name, optionally under a different
+    character. Defaults to the same character."""
+    src = _require_script(slug, character, script)
+    target_character = new_character or character
+    dest = script_dir(slug, target_character, new_script)
+    if dest.exists() and any(dest.iterdir()):
+        raise ProjectError(
+            f"Script '{target_character}/{new_script}' already exists"
+        )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dest)
+    meta = _read_json(
+        dest / "story.json",
+        f"stories/{target_character}/{new_script}/story.json",
+    )
+    meta["character"] = target_character
+    _write_json(dest / "story.json", meta)
+    return load_script(slug, target_character, new_script)
 
-    The character name is the engine's trigger, so it usually matches the folder
-    name. When it does — the common case, because a new story takes its character
-    from its slug — renaming follows through, so the story keeps exporting under
-    the name you just gave it. When the author deliberately set a different
-    character name, that name is left alone: it is a decision, not a default.
 
-    ``character`` sets it explicitly, which is why the rename dialog can change
-    both without a second write. It takes a character argument rather than being
-    a separate save call on purpose: a save replaces every ``.story`` file, so
-    re-uploading them to change one string is how a rename turns into data loss.
+def rename_script(
+    slug: str,
+    character: str,
+    script: str,
+    new_script: str,
+    new_character: str | None = None,
+) -> dict[str, Any]:
+    """Move a script folder to a new name, and optionally to a new character.
+
+    Both the script name and the character can change in one call — the rename
+    dialog sets both without a second write, because a save replaces every
+    ``.story`` file and re-uploading them to change one string is how a rename
+    turns into data loss.
+
+    ``new_character`` moves the script under a different character folder; when
+    omitted the character is unchanged. The manifest's ``character`` field is
+    rewritten to match the destination folder.
 
     No ``.story`` file is read or written here. Renaming moves blocks, it does
     not rewrite them.
     """
-    path = _require_story_manifest(slug, story)
-    dest = story_dir(slug, new_story)
+    path = _require_script_manifest(slug, character, script)
+    target_character = new_character or character
+    dest = script_dir(slug, target_character, new_script)
     if dest.exists() and any(dest.iterdir()):
-        raise ProjectError(f"Story '{new_story}' already exists")
+        raise ProjectError(
+            f"Script '{target_character}/{new_script}' already exists"
+        )
 
-    meta = _read_json(path / "story.json", f"stories/{story}/story.json")
-    was_default = (meta.get("character") or story) == story
+    meta = _read_json(
+        path / "story.json",
+        f"stories/{character}/{script}/story.json",
+    )
+    dest.parent.mkdir(parents=True, exist_ok=True)
     path.rename(dest)
-    if character:
-        meta["character"] = character
-    elif was_default:
-        meta["character"] = new_story
+    meta["character"] = target_character
     _write_json(dest / "story.json", meta)
-    return load_story(slug, new_story)
+
+    # If the old character folder is now empty (the script moved away), drop it
+    # so the tree never carries an empty group.
+    if target_character != character:
+        old_char = character_dir(slug, character)
+        if old_char.is_dir() and not any(old_char.iterdir()):
+            try:
+                old_char.rmdir()
+            except OSError:
+                pass
+
+    return load_script(slug, target_character, new_script)
 
 
 # ── compile ─────────────────────────────────────────────────────────────────
 
 
-def compile_slug(slug: str, story: str) -> CompileResult:
-    loaded = load_story(slug, story)
+def compile_script(slug: str, character: str, script: str) -> CompileResult:
+    loaded = load_script(slug, character, script)
     return compile_project(loaded["meta"], loaded["files"])
 
 
-def compile_all_stories(slug: str) -> dict[str, CompileResult]:
-    """Compile every story, keyed by story slug. What the pack export ships."""
+def compile_all_scripts(slug: str) -> dict[str, CompileResult]:
+    """Compile every script, keyed by ``"<character>/<script>"``.
+
+    That composite key is what the export iterates — it carries both halves of
+    the identity, so the exporter can group by character and still name a
+    script's slug without a second lookup.
+    """
     project = load_project(slug)
-    return {s["slug"]: compile_slug(slug, s["slug"]) for s in project["stories"]}
+    return {
+        f'{s["character"]}/{s["script"]}': compile_script(
+            slug, s["character"], s["script"]
+        )
+        for s in project["scripts"]
+    }
 
 
 # ── assets ──────────────────────────────────────────────────────────────────

@@ -112,8 +112,9 @@ function renderList() {
 
     const meta = document.createElement('span');
     meta.className = 'project-row-meta';
-    const n = p.storyCount ?? (p.stories || []).length;
-    meta.textContent = `${p.slug} · ${n} ${n === 1 ? 'story' : 'stories'}`;
+    const n = p.scriptCount ?? 0;
+    const c = p.characterCount ?? 0;
+    meta.textContent = `${p.slug} · ${c} ${c === 1 ? 'character' : 'characters'} · ${n} ${n === 1 ? 'script' : 'scripts'}`;
 
     row.appendChild(name);
     row.appendChild(meta);
@@ -140,7 +141,7 @@ function renderDetail() {
     return;
   }
 
-  const { slug, meta, stories } = state.detail;
+  const { slug, meta, characters } = state.detail;
 
   // header
   const head = document.createElement('div');
@@ -201,123 +202,136 @@ function renderDetail() {
     return;
   }
 
-  renderStories(root, slug, stories);
+  renderStories(root, slug, characters);
 
   // closing note, because the difference is the whole point of this page
   const note = document.createElement('div');
   note.className = 'manager-empty-note';
   note.innerHTML =
-    '<b>Project</b> = the pack the runtime installs. <b>Story</b> = one story\'s script inside it. ' +
-    'Art in <code>images/</code> and <code>sounds/</code> is shared by every story. ' +
-    'Labels are scoped to a story: a Jump can cross <code>.story</code> files, never stories.';
+    '<b>Project</b> = the pack the runtime installs. <b>Character</b> = one in-game person; ' +
+    '<b>Script</b> = one of their conversations, built from its <code>.story</code> tabs. ' +
+    'Art in <code>images/</code> and <code>sounds/</code> is shared by every script. ' +
+    'Labels are scoped to a script: a Jump can cross <code>.story</code> files, never scripts.';
   root.appendChild(note);
 }
 
-function renderStories(root, slug, stories) {
+function renderStories(root, slug, characters) {
   const sectionHead = document.createElement('div');
   sectionHead.className = 'section-head';
   const sectionTitle = document.createElement('span');
   sectionTitle.className = 'section-title';
-  sectionTitle.textContent = 'Stories';
+  sectionTitle.textContent = 'Characters & scripts';
   sectionHead.appendChild(sectionTitle);
-  sectionHead.appendChild(button('+ New story', 'btn tiny', () => createStoryDialog()));
+  sectionHead.appendChild(button('+ New character', 'btn tiny', () => createCharacterDialog()));
   root.appendChild(sectionHead);
 
   const list = document.createElement('div');
   list.className = 'story-list';
 
-  if (stories.length === 0) {
+  if (characters.length === 0) {
     const note = document.createElement('div');
     note.className = 'manager-empty-note';
     note.innerHTML =
-      'This project has no stories yet. A story is one story\'s script — add one to start writing.';
+      'This project has nothing yet. Add a <b>character</b> — one in-game person — then give them scripts.';
     list.appendChild(note);
   } else {
-    // Group stories by character (the trigger name). Multiple story folders
-    // can share the same character — they're different scripts for the same
-    // in-game person. Render as grouped sections with collapsible headers.
-    const groups = new Map();
-    for (const s of stories) {
-      const key = s.character || s.slug;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(s);
-    }
-
-    for (const [character, groupStories] of groups) {
-      const group = document.createElement('div');
-      group.className = 'story-group';
-
-      const groupHead = document.createElement('div');
-            groupHead.className = 'story-group-head';
-            groupHead.tabIndex = 0;
-            groupHead.role = 'button';
-            groupHead.setAttribute('aria-expanded', 'false');
-
-            const toggle = document.createElement('span');
-            toggle.className = 'story-group-toggle';
-            toggle.textContent = '▶';
-            toggle.setAttribute('aria-hidden', 'true');
-      groupHead.appendChild(toggle);
-
-      const label = document.createElement('span');
-      label.className = 'story-group-label';
-      label.textContent = character;
-      groupHead.appendChild(label);
-
-      // Show count if more than one script for this character
-      if (groupStories.length > 1) {
-        const count = document.createElement('span');
-        count.className = 'story-group-count';
-        count.textContent = `${groupStories.length} scripts`;
-        groupHead.appendChild(count);
-      }
-
-      const groupList = document.createElement('div');
-            groupList.className = 'story-group-list';
-            // Start collapsed
-            groupList.style.display = 'none';
-            for (const s of groupStories) {
-              groupList.appendChild(storyCard(s));
-            }
-
-            // Collapsible behavior
-            let expanded = false;
-            const toggleGroup = () => {
-              expanded = !expanded;
-              groupList.style.display = expanded ? 'flex' : 'none';
-              groupHead.setAttribute('aria-expanded', expanded);
-              toggle.textContent = expanded ? '▼' : '▶';
-            };
-      groupHead.onclick = (e) => {
-        if (e.target.closest('.story-group-count')) return;
-        toggleGroup();
-      };
-      groupHead.onkeydown = (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          toggleGroup();
-        }
-      };
-
-      group.appendChild(groupHead);
-      group.appendChild(groupList);
-      list.appendChild(group);
+    for (const group of characters) {
+      list.appendChild(characterGroup(group));
     }
   }
 
   root.appendChild(list);
 }
 
-function storyCard(s) {
+// One character: a collapsible header naming the person, and their scripts
+// inside. The server sends the grouping (character -> scripts), so this is a
+// straight render of the tree.
+function characterGroup(group) {
+  const character = group.character;
+  const scripts = group.scripts || [];
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'story-group';
+
+  const head = document.createElement('div');
+  head.className = 'story-group-head';
+  head.tabIndex = 0;
+  head.role = 'button';
+  head.setAttribute('aria-expanded', 'false');
+
+  const toggle = document.createElement('span');
+  toggle.className = 'story-group-toggle';
+  toggle.textContent = '▶';
+  toggle.setAttribute('aria-hidden', 'true');
+  head.appendChild(toggle);
+
+  const label = document.createElement('span');
+  label.className = 'story-group-label';
+  label.textContent = character;
+  head.appendChild(label);
+
+  const count = document.createElement('span');
+  count.className = 'story-group-count';
+  count.textContent = `${scripts.length} ${scripts.length === 1 ? 'script' : 'scripts'}`;
+  head.appendChild(count);
+
+  // Per-character actions: add a script, delete the whole character.
+  const headActions = document.createElement('span');
+  headActions.className = 'story-group-actions';
+  headActions.appendChild(
+    button('+ Script', 'btn tiny', (e) => {
+      e.stopPropagation();
+      createScriptDialog(character);
+    })
+  );
+  headActions.appendChild(
+    button('Delete', 'btn tiny danger', (e) => {
+      e.stopPropagation();
+      deleteCharacter(character);
+    })
+  );
+  head.appendChild(headActions);
+
+  const scriptList = document.createElement('div');
+  scriptList.className = 'story-group-list';
+  scriptList.style.display = 'none';
+  for (const s of scripts) {
+    scriptList.appendChild(storyCard(character, s));
+  }
+
+  let expanded = false;
+  const toggleGroup = () => {
+    expanded = !expanded;
+    scriptList.style.display = expanded ? 'flex' : 'none';
+    head.setAttribute('aria-expanded', expanded);
+    toggle.textContent = expanded ? '▼' : '▶';
+  };
+  head.onclick = (e) => {
+    if (e.target.closest('button')) return;
+    toggleGroup();
+  };
+  head.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleGroup();
+    }
+  };
+
+  wrapper.appendChild(head);
+  wrapper.appendChild(scriptList);
+  return wrapper;
+}
+
+function storyCard(character, s) {
   const card = document.createElement('div');
   card.className = 'story-card';
   card.tabIndex = 0;
   card.onclick = (e) => {
     if (e.target.closest('.story-card-actions')) return;
-    openStory(s.slug);
+    openScript(character, s.script);
   };
   card.onkeydown = (e) => {
-    if (e.key === 'Enter') openStory(s.slug);
+    if (e.key === 'Enter') openScript(character, s.script);
   };
 
   const main = document.createElement('div');
@@ -325,17 +339,7 @@ function storyCard(s) {
 
   const nameRow = document.createElement('div');
   nameRow.className = 'story-card-name';
-  nameRow.textContent = s.character || s.slug;
-
-  // The slug is the folder; the character is the trigger the engine reads. They
-  // are usually the same, and showing both when they differ is the only way to
-  // notice that a story will export under a different name than its folder.
-  if (s.character && s.character !== s.slug) {
-    const badge = document.createElement('span');
-    badge.className = 'story-badge';
-    badge.textContent = s.slug;
-    nameRow.appendChild(badge);
-  }
+  nameRow.textContent = s.script;
 
   const sub = document.createElement('div');
   sub.className = 'story-card-sub';
@@ -353,19 +357,19 @@ function storyCard(s) {
   cardActions.appendChild(
     button('Rename', 'btn tiny', (e) => {
       e.stopPropagation();
-      renameStoryDialog(s.slug);
+      renameScriptDialog(character, s.script);
     })
   );
   cardActions.appendChild(
     button('Duplicate', 'btn tiny', (e) => {
       e.stopPropagation();
-      duplicateStory(s.slug);
+      duplicateScript(character, s.script);
     })
   );
   cardActions.appendChild(
     button('Delete', 'btn tiny danger', (e) => {
       e.stopPropagation();
-      deleteStory(s.slug);
+      deleteScript(character, s.script);
     })
   );
 
@@ -383,12 +387,17 @@ function button(text, cls, onclick, title) {
   return b;
 }
 
-// ── opening a story ─────────────────────────────────────────────────────────
+// ── opening a script ────────────────────────────────────────────────────────
 
-function openStory(storySlug) {
-  // The editor reads ?project= and ?story= so a reload returns to the same
-  // place, and so a story can be linked to.
-  window.location.href = `/editor?project=${encodeURIComponent(state.activeSlug)}&story=${encodeURIComponent(storySlug)}`;
+function openScript(character, script) {
+  // The editor reads ?project=, ?character= and ?script= so a reload returns to
+  // the same place, and so a script can be linked to.
+  const params = new URLSearchParams({
+    project: state.activeSlug,
+    character,
+    script,
+  });
+  window.location.href = `/editor?${params.toString()}`;
 }
 
 // ── variables ───────────────────────────────────────────────────────────────
@@ -596,11 +605,11 @@ async function duplicateProject() {
 
 async function deleteProject() {
   const p = state.projects.find((x) => x.slug === state.activeSlug);
-  const count = state.detail?.stories?.length ?? 0;
+  const count = state.detail?.scripts?.length ?? 0;
   const ok = await confirmDialog(
     'Delete project?',
     `This removes projects/${state.activeSlug}/ — ${count} ${
-      count === 1 ? 'story' : 'stories'
+      count === 1 ? 'script' : 'scripts'
     }, every .story file and all of its images and sounds. This cannot be undone.`,
     'Delete project'
   );
@@ -779,56 +788,50 @@ function exportDialog() {
   });
 }
 
-// ── story actions ───────────────────────────────────────────────────────────
+// ── script actions ──────────────────────────────────────────────────────────
 
-async function createStory(storySlug, character) {
+async function createScript(character, script, meta = {}) {
   const res = await fetch(
-    `/api/projects/${encodeURIComponent(state.activeSlug)}/stories`,
+    `/api/projects/${encodeURIComponent(state.activeSlug)}/scripts`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        slug: storySlug,
-        // The character is the engine's trigger and defaults to the folder name.
-        // Sending it explicitly keeps the two independent when an author wants
-        // a differently-named script for the same story.
-        meta: { character: character || storySlug },
-      }),
+      body: JSON.stringify({ character, script, meta }),
     }
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Could not create the story.');
+    throw new Error(err.detail || 'Could not create the script.');
   }
   await openProject(state.activeSlug);
 }
 
-async function renameStory(storySlug, newSlug) {
+async function renameScript(character, script, newSlug, newCharacter) {
   const res = await fetch(
-    `/api/projects/${encodeURIComponent(state.activeSlug)}/stories/${encodeURIComponent(
-      storySlug
-    )}/rename`,
+    `/api/projects/${encodeURIComponent(state.activeSlug)}/scripts/${encodeURIComponent(
+      character
+    )}/${encodeURIComponent(script)}/rename`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ new_slug: newSlug }),
+      body: JSON.stringify({ new_slug: newSlug, character: newCharacter ?? null }),
     }
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    alert(err.detail || 'Could not rename the story.');
+    alert(err.detail || 'Could not rename the script.');
     return;
   }
   await openProject(state.activeSlug);
 }
 
-async function duplicateStory(storySlug) {
-  const newSlug = prompt('Duplicate story to which name?', `${storySlug}_copy`);
+async function duplicateScript(character, script) {
+  const newSlug = prompt('Duplicate script to which name?', `${script}_copy`);
   if (!newSlug) return;
   const res = await fetch(
-    `/api/projects/${encodeURIComponent(state.activeSlug)}/stories/${encodeURIComponent(
-      storySlug
-    )}/duplicate`,
+    `/api/projects/${encodeURIComponent(state.activeSlug)}/scripts/${encodeURIComponent(
+      character
+    )}/${encodeURIComponent(script)}/duplicate`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -837,29 +840,51 @@ async function duplicateStory(storySlug) {
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    alert(err.detail || 'Could not duplicate the story.');
+    alert(err.detail || 'Could not duplicate the script.');
     return;
   }
   await openProject(state.activeSlug);
 }
 
-async function deleteStory(storySlug) {
+async function deleteScript(character, script) {
   const ok = await confirmDialog(
-    'Delete story?',
-    `This removes the story "${storySlug}" — its .story files and every block in them. ` +
+    'Delete script?',
+    `This removes the script "${character}/${script}" — its .story files and every block in them. ` +
       `Shared images and sounds stay. This cannot be undone.`,
-    'Delete story'
+    'Delete script'
   );
   if (!ok) return;
 
   const res = await fetch(
-    `/api/projects/${encodeURIComponent(state.activeSlug)}/stories/${encodeURIComponent(
-      storySlug
+    `/api/projects/${encodeURIComponent(state.activeSlug)}/scripts/${encodeURIComponent(
+      character
+    )}/${encodeURIComponent(script)}`,
+    { method: 'DELETE' }
+  );
+  if (!res.ok) {
+    alert('Could not delete the script.');
+    return;
+  }
+  await openProject(state.activeSlug);
+}
+
+async function deleteCharacter(character) {
+  const ok = await confirmDialog(
+    'Delete character?',
+    `This removes "${character}" and every script under it — all their .story files and blocks. ` +
+      `Shared images and sounds stay. This cannot be undone.`,
+    'Delete character'
+  );
+  if (!ok) return;
+
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(state.activeSlug)}/characters/${encodeURIComponent(
+      character
     )}`,
     { method: 'DELETE' }
   );
   if (!res.ok) {
-    alert('Could not delete the story.');
+    alert('Could not delete the character.');
     return;
   }
   await openProject(state.activeSlug);
@@ -968,10 +993,9 @@ function newProjectDialog() {
         meta: { packName: p.packName, description: p.description },
       });
       if (p.story) {
-        // The first story is part of creating a project, because a project with
-        // no stories is a folder that does nothing yet. A project starts with one
-        // story, so the story's character is the project's own slug.
-        await createStory(p.story, p.slug);
+        // A project starts with one character, so the first character's name is
+        // the project's own slug, and it gets one starter script named "main".
+        await createScript(p.slug, 'main', { character: p.slug });
       }
     },
   });
@@ -1000,20 +1024,21 @@ function renameProjectDialog() {
   });
 }
 
-function createStoryDialog() {
+function createCharacterDialog() {
+  // A character is just a named folder. Creating one makes the group; scripts
+  // are added to it afterwards with "+ Script".
   return new Promise((resolve) => {
     const backdrop = $('story-dialog');
     const charEl = $('sf-character');
     const slugEl = $('sf-slug');
     const errEl = $('sf-error');
 
-    // User has taken over the slug field (stopped auto-mirroring).
-    // Using a flag instead of the input's readOnly attribute, because
-    // readOnly is a browser UI state, not our logical state.
-    let slugUserEdited = false;
-
+    $('story-dialog-title').textContent = 'New character';
+    $('story-dialog-ok').textContent = 'Create';
     charEl.value = '';
     slugEl.value = '';
+    // Hide the second field — a character has only a name.
+    slugEl.closest('.field').hidden = true;
     errEl.hidden = true;
     errEl.textContent = '';
     backdrop.hidden = false;
@@ -1023,143 +1048,28 @@ function createStoryDialog() {
       errEl.textContent = msg;
       errEl.hidden = false;
     };
-
     const done = (value) => {
       backdrop.hidden = true;
       cleanup();
       resolve(value);
     };
-
     const submit = async () => {
-      const character = charEl.value.trim();
-      if (!character) return showError('Who is this story about?');
+      const character = charEl.value.trim().toLowerCase().replace(/\s+/g, '_');
+      if (!character) return showError('Give the character a name.');
       if (!/^[a-z0-9_-]+$/.test(character)) {
-        return showError('Lowercase letters, numbers, - and _ only — it becomes a file name.');
+        return showError('Lowercase letters, numbers, - and _ only — it becomes a folder name.');
       }
-      const slug = slugEl.value.trim() || character;
       $('story-dialog-ok').disabled = true;
       try {
-        await createStory(slug, character);
-        done({ slug, character });
+        // A character with one starter script, so the group is never empty.
+        await createScript(character, 'main', { character });
+        done({ character });
       } catch (e) {
         showError(e.message);
       } finally {
         $('story-dialog-ok').disabled = false;
       }
     };
-
-    const onKey = (e) => {
-      if (e.key === 'Escape') done(null);
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        submit();
-      }
-    };
-    const onClick = (e) => { if (e.target === backdrop) done(null); };
-    const cleanup = () => {
-      document.removeEventListener('keydown', onKey);
-      backdrop.removeEventListener('click', onClick);
-      $('story-dialog-ok').onclick = null;
-      $('story-dialog-cancel').onclick = null;
-      $('story-dialog-close').onclick = null;
-      // Handlers we attached to the shared fields — clear them so the
-      // next dialog (rename) starts fresh.
-      charEl.oninput = null;
-      slugEl.oninput = null;
-      slugEl.onfocus = null;
-    };
-
-    // The story name mirrors the character until the author takes it over —
-    // the common case is one folder per story, and making them type it twice is
-    // a pointless chore.
-    charEl.oninput = () => {
-      if (slugUserEdited) return;
-      slugEl.value = charEl.value.trim().toLowerCase().replace(/\s+/g, '_');
-    };
-    // User typing in or focusing the slug means they're taking over.
-    slugEl.oninput = () => { slugUserEdited = true; };
-    slugEl.onfocus = () => { slugUserEdited = true; };
-
-    $('story-dialog-ok').onclick = submit;
-    $('story-dialog-cancel').onclick = () => done(null);
-    $('story-dialog-close').onclick = () => done(null);
-    document.addEventListener('keydown', onKey);
-    backdrop.addEventListener('click', onClick);
-  });
-}
-
-function renameStoryDialog(storySlug) {
-  return new Promise((resolve) => {
-    const backdrop = $('story-dialog');
-    const charEl = $('sf-character');
-    const slugEl = $('sf-slug');
-    const errEl = $('sf-error');
-
-    let slugUserEdited = false;
-
-    const existing = state.detail?.stories?.find((x) => x.slug === storySlug);
-
-    $('story-dialog-title').textContent = 'Rename story';
-    $('story-dialog-ok').textContent = 'Rename';
-    charEl.value = existing?.character || storySlug;
-    slugEl.value = storySlug;
-    // The New story dialog leaves an oninput on this shared field.
-    // Clear it so a rename starts fresh.
-    slugEl.oninput = null;
-    errEl.hidden = true;
-    errEl.textContent = '';
-    backdrop.hidden = false;
-    setTimeout(() => slugEl.focus(), 0);
-
-    const done = (value) => {
-      backdrop.hidden = true;
-      cleanup();
-      resolve(value);
-    };
-
-    const submit = async () => {
-      const character = charEl.value.trim();
-      const newSlug = slugEl.value.trim();
-      if (!character) return;
-      if (!newSlug) {
-        errEl.textContent = 'Give the story a name.';
-        errEl.hidden = false;
-        return;
-      }
-      if (newSlug === storySlug && character === (existing?.character || storySlug)) {
-        return done(null);
-      }
-      $('story-dialog-ok').disabled = true;
-      try {
-        // Renaming moves the folder, so it can only do one of the two at a time.
-        // Renaming the folder carries the character with it when the character
-        // was just the folder name; a deliberate character name is left alone.
-        if (newSlug !== storySlug || character !== (existing?.character || storySlug)) {
-          const res = await fetch(
-            `/api/projects/${encodeURIComponent(state.activeSlug)}/stories/${encodeURIComponent(
-              storySlug
-            )}/rename`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ new_slug: newSlug, character }),
-            }
-          );
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || 'Could not rename the story.');
-          }
-        }
-        await openProject(state.activeSlug);
-        done({ slug: newSlug, character });
-      } catch (e) {
-        errEl.textContent = String(e.message ?? e);
-        errEl.hidden = false;
-      } finally {
-        $('story-dialog-ok').disabled = false;
-      }
-    };
-
     const onKey = (e) => {
       if (e.key === 'Escape') done(null);
       if (e.key === 'Enter') { e.preventDefault(); submit(); }
@@ -1172,15 +1082,164 @@ function renameStoryDialog(storySlug) {
       $('story-dialog-cancel').onclick = null;
       $('story-dialog-close').onclick = null;
       $('story-dialog-ok').textContent = 'Create';
-      // Same shared-field rule: leave no handler behind for the next dialog.
+      slugEl.closest('.field').hidden = false;
+      charEl.oninput = null;
+    };
+
+    $('story-dialog-ok').onclick = submit;
+    $('story-dialog-cancel').onclick = () => done(null);
+    $('story-dialog-close').onclick = () => done(null);
+    document.addEventListener('keydown', onKey);
+    backdrop.addEventListener('click', onClick);
+  });
+}
+
+function createScriptDialog(character) {
+  // Add a script under an existing character. Only the script name is asked —
+  // the character is fixed by which group's "+ Script" was clicked.
+  return new Promise((resolve) => {
+    const backdrop = $('story-dialog');
+    const charEl = $('sf-character');
+    const slugEl = $('sf-slug');
+    const errEl = $('sf-error');
+
+    $('story-dialog-title').textContent = `New script for ${character}`;
+    $('story-dialog-ok').textContent = 'Create';
+    charEl.value = character;
+    slugEl.value = '';
+    // The character is fixed here; only the script name is editable.
+    charEl.closest('.field').hidden = true;
+    slugEl.closest('.field').hidden = false;
+    errEl.hidden = true;
+    errEl.textContent = '';
+    backdrop.hidden = false;
+    setTimeout(() => slugEl.focus(), 0);
+
+    const showError = (msg) => {
+      errEl.textContent = msg;
+      errEl.hidden = false;
+    };
+    const done = (value) => {
+      backdrop.hidden = true;
+      cleanup();
+      resolve(value);
+    };
+    const submit = async () => {
+      const script = slugEl.value.trim().toLowerCase().replace(/\s+/g, '_');
+      if (!script) return showError('Give the script a name.');
+      if (!/^[a-z0-9_-]+$/.test(script)) {
+        return showError('Lowercase letters, numbers, - and _ only — it becomes a folder name.');
+      }
+      $('story-dialog-ok').disabled = true;
+      try {
+        await createScript(character, script, { character });
+        done({ character, script });
+      } catch (e) {
+        showError(e.message);
+      } finally {
+        $('story-dialog-ok').disabled = false;
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') done(null);
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    };
+    const onClick = (e) => { if (e.target === backdrop) done(null); };
+    const cleanup = () => {
+      document.removeEventListener('keydown', onKey);
+      backdrop.removeEventListener('click', onClick);
+      $('story-dialog-ok').onclick = null;
+      $('story-dialog-cancel').onclick = null;
+      $('story-dialog-close').onclick = null;
+      $('story-dialog-ok').textContent = 'Create';
+      charEl.closest('.field').hidden = false;
+      slugEl.closest('.field').hidden = false;
+      slugEl.oninput = null;
+    };
+
+    $('story-dialog-ok').onclick = submit;
+    $('story-dialog-cancel').onclick = () => done(null);
+    $('story-dialog-close').onclick = () => done(null);
+    document.addEventListener('keydown', onKey);
+    backdrop.addEventListener('click', onClick);
+  });
+}
+
+function renameScriptDialog(character, script) {
+  // Rename a script and/or move it under a different character. Both fields are
+  // editable: the script name, and the character (which moves the folder).
+  return new Promise((resolve) => {
+    const backdrop = $('story-dialog');
+    const charEl = $('sf-character');
+    const slugEl = $('sf-slug');
+    const errEl = $('sf-error');
+
+    const existing = { character, script };
+
+    $('story-dialog-title').textContent = 'Rename script';
+    $('story-dialog-ok').textContent = 'Rename';
+    charEl.value = character;
+    slugEl.value = script;
+    charEl.closest('.field').hidden = false;
+    slugEl.closest('.field').hidden = false;
+    // The character field's label reads "Character"; the script field "Script".
+    charEl.closest('.field').querySelector('.field-label').textContent = 'Character';
+    slugEl.closest('.field').querySelector('.field-label').textContent = 'Script';
+    errEl.hidden = true;
+    errEl.textContent = '';
+    backdrop.hidden = false;
+    setTimeout(() => slugEl.focus(), 0);
+
+    const done = (value) => {
+      backdrop.hidden = true;
+      cleanup();
+      resolve(value);
+    };
+    const submit = async () => {
+      const newCharacter = charEl.value.trim().toLowerCase().replace(/\s+/g, '_');
+      const newScript = slugEl.value.trim().toLowerCase().replace(/\s+/g, '_');
+      if (!newCharacter) { errEl.textContent = 'Give the character a name.'; errEl.hidden = false; return; }
+      if (!newScript) { errEl.textContent = 'Give the script a name.'; errEl.hidden = false; return; }
+      if (!/^[a-z0-9_-]+$/.test(newCharacter) || !/^[a-z0-9_-]+$/.test(newScript)) {
+        errEl.textContent = 'Lowercase letters, numbers, - and _ only.';
+        errEl.hidden = false;
+        return;
+      }
+      if (newCharacter === existing.character && newScript === existing.script) {
+        return done(null);
+      }
+      $('story-dialog-ok').disabled = true;
+      try {
+        await renameScript(existing.character, existing.script, newScript, newCharacter);
+        done({ character: newCharacter, script: newScript });
+      } catch (e) {
+        errEl.textContent = String(e.message ?? e);
+        errEl.hidden = false;
+      } finally {
+        $('story-dialog-ok').disabled = false;
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') done(null);
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    };
+    const onClick = (e) => { if (e.target === backdrop) done(null); };
+    const cleanup = () => {
+      document.removeEventListener('keydown', onKey);
+      backdrop.removeEventListener('click', onClick);
+      $('story-dialog-ok').onclick = null;
+      $('story-dialog-cancel').onclick = null;
+      $('story-dialog-close').onclick = null;
+      $('story-dialog-ok').textContent = 'Create';
+      // Restore the field labels the create dialogs may have hidden.
+      charEl.closest('.field').querySelector('.field-label').textContent = 'Character';
+      slugEl.closest('.field').querySelector('.field-label').textContent = 'Story name';
+      charEl.closest('.field').hidden = false;
+      slugEl.closest('.field').hidden = false;
       charEl.oninput = null;
       slugEl.oninput = null;
       slugEl.onfocus = null;
     };
-
-    // In rename, the slug is editable from the start — user owns it immediately.
-    slugUserEdited = true;
-    slugEl.onfocus = () => { slugUserEdited = true; };
 
     $('story-dialog-ok').onclick = submit;
     $('story-dialog-cancel').onclick = () => done(null);

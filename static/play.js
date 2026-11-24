@@ -22,7 +22,8 @@ const $ = (id) => document.getElementById(id);
 
 const params = new URLSearchParams(location.search);
 const project = params.get('project');
-const story = params.get('story');
+const character = params.get('character');
+const script = params.get('script');
 
 const state = {
   payload: null,
@@ -36,18 +37,18 @@ const state = {
 // ── boot ────────────────────────────────────────────────────────────────────
 
 async function boot() {
-  if (!project || !story) {
-    showErrors(['No story given. Open this from the studio.']);
+  if (!project || !character || !script) {
+    showErrors(['No script given. Open this from the studio.']);
     return;
   }
 
   const res = await fetch(
-    `/api/projects/${encodeURIComponent(project)}/stories/${encodeURIComponent(story)}/play`
+    `/api/projects/${encodeURIComponent(project)}/scripts/${encodeURIComponent(character)}/${encodeURIComponent(script)}/play`
   );
   const payload = await res.json();
   state.payload = payload;
 
-  $('play-title').textContent = `${payload.character ?? story} — preview`;
+  $('play-title').textContent = `${payload.character ?? character}/${script} — preview`;
 
   if (!payload.ok) {
     showErrors(payload.errors, payload.warnings);

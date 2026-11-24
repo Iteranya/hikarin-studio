@@ -28,6 +28,10 @@ def _read(project):
     return variables.load_variables(store.project_dir(project))
 
 
+def _seed_script(project, character="cupa", script="main"):
+    store.create_script(project, character, script, {"character": character})
+
+
 # ── storage ─────────────────────────────────────────────────────────────────
 
 
@@ -139,13 +143,13 @@ def test_a_bad_entry_leaves_the_file_untouched(project):
 # ── what the editor sees ────────────────────────────────────────────────────
 
 
-def test_story_payload_carries_the_registry(project):
-    """The editor must not need a second request per story open."""
-    store.create_story("touhou", "cupa")
+def test_script_payload_carries_the_registry(project):
+    """The editor must not need a second request per script open."""
+    _seed_script(project)
     _write(project, [{"name": "affection"}, {"name": "seen_night"}])
 
-    story = store.load_story("touhou", "cupa")
-    assert [v["name"] for v in story["variables"]] == ["affection", "seen_night"]
+    script = store.load_script(project, "cupa", "main")
+    assert [v["name"] for v in script["variables"]] == ["affection", "seen_night"]
 
 
 def test_registry_is_per_project(temp_root):
@@ -159,17 +163,17 @@ def test_registry_is_per_project(temp_root):
     assert [v["name"] for v in _read("b")] == ["health"]
 
 
-def test_deleting_a_variable_does_not_touch_stories(project):
+def test_deleting_a_variable_does_not_touch_scripts(project):
     """The registry is a convenience for the editor, not state the engine reads."""
-    store.create_story("touhou", "cupa")
+    _seed_script(project)
     _write(project, [{"name": "affection"}])
 
     blocks = [{"kind": "setVar", "data": {"var": "affection", "value": 1}}]
-    store.save_story("touhou", "cupa", {"character": "cupa"}, {"main.story": blocks})
+    store.save_script(project, "cupa", "main", {"character": "cupa"}, {"main.story": blocks})
 
     _write(project, [])  # remove the declaration
 
-    after = store.load_story("touhou", "cupa")
+    after = store.load_script(project, "cupa", "main")
     assert after["files"]["main.story"][0]["data"]["var"] == "affection"
     assert after["variables"] == []
 
@@ -240,7 +244,7 @@ def test_authoring_scope_translation():
 
 def test_a_local_variable_never_emits_a_scope_key(project):
     """A bare name is how the engine says local. Emitting scope="" would not be."""
-    store.create_story("touhou", "cupa")
+    _seed_script(project)
     blocks = [
         {"kind": "label", "data": {"name": "start"}},
         {"kind": "if", "data": {
@@ -249,9 +253,9 @@ def test_a_local_variable_never_emits_a_scope_key(project):
         }},
         {"kind": "end", "data": {}},
     ]
-    store.save_story("touhou", "cupa", {"character": "cupa"}, {"main.story": blocks})
+    store.save_script(project, "cupa", "main", {"character": "cupa"}, {"main.story": blocks})
 
-    result = store.compile_slug("touhou", "cupa")
+    result = store.compile_script(project, "cupa", "main")
     cond = next(a for a in result.actions if a["type"] == "conditional")
     assert "scope" not in cond, "local is a bare name, not an empty scope"
     assert cond["var"] == "tick"
@@ -266,15 +270,15 @@ def test_global_scope_is_the_world_prefix(project):
 
 def test_a_local_variable_needs_no_declaration(project):
     """Locals are typed straight into the block and compile as bare names."""
-    store.create_story("touhou", "cupa")
+    _seed_script(project)
     blocks = [
         {"kind": "label", "data": {"name": "start"}},
         {"kind": "setVar", "data": {"var": "tick", "value": 1, "operation": "increment_var"}},
         {"kind": "end", "data": {}},
     ]
-    store.save_story("touhou", "cupa", {"character": "cupa"}, {"main.story": blocks})
+    store.save_script(project, "cupa", "main", {"character": "cupa"}, {"main.story": blocks})
 
-    result = store.compile_slug("touhou", "cupa")
+    result = store.compile_script(project, "cupa", "main")
     assert result.ok
     written = next(a for a in result.actions if a["type"] == "modify_variable")
     assert written["var"] == "tick"
@@ -284,7 +288,7 @@ def test_a_local_variable_needs_no_declaration(project):
 def test_a_global_variable_compiles_with_the_engine_scope(project):
     """The studio says GLOBAL; the JSON says WORLD, because that is what the
     engine reads. The translation is the whole point of the seam."""
-    store.create_story("touhou", "cupa")
+    _seed_script(project)
     blocks = [
         {"kind": "label", "data": {"name": "start"}},
         {"kind": "setVar", "data": {
@@ -292,24 +296,24 @@ def test_a_global_variable_compiles_with_the_engine_scope(project):
         }},
         {"kind": "end", "data": {}},
     ]
-    store.save_story("touhou", "cupa", {"character": "cupa"}, {"main.story": blocks})
+    store.save_script(project, "cupa", "main", {"character": "cupa"}, {"main.story": blocks})
 
-    result = store.compile_slug("touhou", "cupa")
+    result = store.compile_script(project, "cupa", "main")
     written = next(a for a in result.actions if a["type"] == "modify_variable")
     assert written["var"] == "story_complete"
     assert written["scope"] == "WORLD"
 
 
-def test_a_story_still_compiles_with_an_undeclared_variable(project):
+def test_a_script_still_compiles_with_an_undeclared_variable(project):
     """Declaring is a convenience. The compiler never required it."""
-    store.create_story("touhou", "cupa")
+    _seed_script(project)
     blocks = [
         {"kind": "label", "data": {"name": "start"}},
         {"kind": "setVar", "data": {"var": "made_up", "value": 1, "operation": "set"}},
         {"kind": "end", "data": {}},
     ]
-    store.save_story("touhou", "cupa", {"character": "cupa"}, {"main.story": blocks})
+    store.save_script(project, "cupa", "main", {"character": "cupa"}, {"main.story": blocks})
 
-    result = store.compile_slug("touhou", "cupa")
+    result = store.compile_script(project, "cupa", "main")
     assert result.ok, result.errors
     assert any(a.get("var") == "made_up" for a in result.actions)
