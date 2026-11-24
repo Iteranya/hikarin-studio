@@ -39,7 +39,7 @@ from hikarin.exporter import (
     build_project_bundle,
     build_text,
     export_filename_for,
-    script_slug,
+    export_script_name,
 )
 from hikarin.export_formats import EXPORT_FORMATS, defaults, get_format, public_formats
 from hikarin.rm_exporter import build_rmkit
@@ -702,7 +702,8 @@ def export_project(slug: str, format: str = "pack", pack_format: int | None = No
             result = compile_project(loaded["meta"], loaded["files"])
             payload = build_json(loaded["meta"], result)
             media = "application/json"
-            filename = f"{script_slug(character, script)}.json"
+            multi = _script_count_for_character(project, character) > 1
+            filename = f"{export_script_name(character, script, multi)}.json"
 
         else:
             raise HTTPException(
@@ -719,6 +720,14 @@ def export_project(slug: str, format: str = "pack", pack_format: int | None = No
     )
 
 
+def _script_count_for_character(project: dict, character: str) -> int:
+    """How many scripts a character has in this project."""
+    for group in project.get("characters") or []:
+        if group["character"] == character:
+            return len(group.get("scripts") or [])
+    return 0
+
+
 @app.get("/api/projects/{slug}/scripts/{character}/{script}/export")
 def export_script(slug: str, character: str, script: str, format: str = "json"):
     """One script, compiled and written out on its own."""
@@ -730,20 +739,26 @@ def export_script(slug: str, character: str, script: str, format: str = "json"):
             content={"ok": False, "errors": result.errors, "warnings": result.warnings},
         )
 
+    # A single-script character exports under the bare character name; one with
+    # several scripts uses <character>_<script>.
+    project = _project_or_404(project_store.load_project, slug)
+    multi = _script_count_for_character(project, character) > 1
+    base = export_script_name(character, script, multi)
+
     fmt = (format or "json").lower()
     try:
         if fmt == "json":
             payload = build_json(loaded["meta"], result)
             media = "application/json"
-            filename = f"{script_slug(character, script)}.json"
+            filename = f"{base}.json"
         elif fmt == "txt":
             payload = build_text(loaded["meta"], result)
             media = "text/plain"
-            filename = f"{script_slug(character, script)}.txt"
+            filename = f"{base}.txt"
         elif fmt == "md":
             payload = build_markdown(loaded["meta"], result)
             media = "text/markdown"
-            filename = f"{script_slug(character, script)}.md"
+            filename = f"{base}.md"
         else:
             raise HTTPException(
                 status_code=400, detail=f"Unknown format {format!r} (json|txt|md)"

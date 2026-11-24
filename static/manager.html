@@ -122,6 +122,11 @@
         <input type="text" id="sf-character" class="input" placeholder="cupa" autocomplete="off">
         <span class="field-hint">One in-game person. Becomes the folder under <code>stories/</code> that groups their scripts. Lowercase, no spaces.</span>
       </label>
+      <label class="field field-inline" id="sf-single-field" hidden>
+        <input type="checkbox" id="sf-single" class="checkbox">
+        <span class="field-label">Single-script character</span>
+        <span class="field-hint">Creates one script named after the character (e.g. <code>miku</code>), and exports it as a standalone <code>miku.json</code> instead of <code>miku_main.json</code>. Leave off for a character with several scripts.</span>
+      </label>
       <label class="field">
         <span class="field-label">Script</span>
         <input type="text" id="sf-slug" class="input" placeholder="main" autocomplete="off">

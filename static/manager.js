@@ -1027,18 +1027,26 @@ function renameProjectDialog() {
 function createCharacterDialog() {
   // A character is just a named folder. Creating one makes the group; scripts
   // are added to it afterwards with "+ Script".
+  //
+  // "Single-script character" is a convenience: it names the one starter script
+  // after the character (miku -> miku/miku), which also makes the hikarin export
+  // emit a bare miku.json instead of miku_main.json. It stores no flag — export
+  // infers "single" from the script count — so it is purely a naming choice.
   return new Promise((resolve) => {
     const backdrop = $('story-dialog');
     const charEl = $('sf-character');
     const slugEl = $('sf-slug');
+    const singleEl = $('sf-single');
     const errEl = $('sf-error');
 
     $('story-dialog-title').textContent = 'New character';
     $('story-dialog-ok').textContent = 'Create';
     charEl.value = '';
     slugEl.value = '';
+    singleEl.checked = false;
     // Hide the second field — a character has only a name.
     slugEl.closest('.field').hidden = true;
+    $('sf-single-field').hidden = false;
     errEl.hidden = true;
     errEl.textContent = '';
     backdrop.hidden = false;
@@ -1059,11 +1067,13 @@ function createCharacterDialog() {
       if (!/^[a-z0-9_-]+$/.test(character)) {
         return showError('Lowercase letters, numbers, - and _ only — it becomes a folder name.');
       }
+      // Single-script: the one starter script is named after the character.
+      const firstScript = singleEl.checked ? character : 'main';
       $('story-dialog-ok').disabled = true;
       try {
         // A character with one starter script, so the group is never empty.
-        await createScript(character, 'main', { character });
-        done({ character });
+        await createScript(character, firstScript, { character });
+        done({ character, script: firstScript });
       } catch (e) {
         showError(e.message);
       } finally {
@@ -1083,6 +1093,7 @@ function createCharacterDialog() {
       $('story-dialog-close').onclick = null;
       $('story-dialog-ok').textContent = 'Create';
       slugEl.closest('.field').hidden = false;
+      $('sf-single-field').hidden = true;
       charEl.oninput = null;
     };
 

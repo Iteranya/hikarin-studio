@@ -94,6 +94,20 @@ def _split_key(key: str, story_meta: dict) -> tuple[str, str]:
     return character, key
 
 
+def export_script_name(character: str, script: str, multi: bool) -> str:
+    """The flat file name (without ``.json``) for one script in an export.
+
+    A character with a single script exports under the bare character name
+    (``miku.json``) — there is nothing to disambiguate. A character with
+    several scripts uses ``<character>_<script>`` so same-named scripts under
+    different characters never collide (``miku_main``, ``rue_main``).
+    """
+    if not multi:
+        raw = character.strip().lower().replace(" ", "_")
+        return raw or "script"
+    return script_slug(character, script)
+
+
 def build_pack(
     meta: dict,
     stories: dict[str, tuple[dict, CompileResult]],
@@ -231,6 +245,14 @@ def build_hikarin(
     if not stories:
         raise ValueError("Cannot export: this project has no scripts.")
 
+    # Count scripts per character. A character with exactly one script exports
+    # under the bare character name; one with several uses <character>_<script>
+    # so same-named scripts never collide.
+    char_counts: dict[str, int] = {}
+    for key, (story_meta, _result) in stories.items():
+        character, _script = _split_key(key, story_meta)
+        char_counts[character] = char_counts.get(character, 0) + 1
+
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         scripts: list[dict[str, Any]] = []
@@ -238,7 +260,8 @@ def build_hikarin(
 
         for key, (story_meta, result) in stories.items():
             character, script = _split_key(key, story_meta)
-            filename = script_slug(character, script)
+            multi = char_counts.get(character, 0) > 1
+            filename = export_script_name(character, script, multi)
             if filename in seen:
                 raise ValueError(
                     f'Scripts "{seen[filename]}" and "{key}" both compile to '

@@ -352,9 +352,10 @@ def test_hikarin_bundle_has_no_resource_pack_layout(pack, temp_root):
     with zipfile.ZipFile(io.BytesIO(payload)) as zf:
         names = set(zf.namelist())
 
-        # flat slugs at the root — no assets/hikarin/ prefix
-        assert "cupa_main.json" in names
-        assert "reimu_main.json" in names
+        # A single-script character exports under the bare character name, flat
+        # at the root — no assets/hikarin/ prefix.
+        assert "cupa.json" in names
+        assert "reimu.json" in names
         assert not any(n.startswith("assets/") for n in names), names
 
         # none of the resource-pack machinery
@@ -372,28 +373,46 @@ def test_hikarin_bundle_has_no_resource_pack_layout(pack, temp_root):
             ("cupa", "main"),
             ("reimu", "main"),
         }
-        assert all(s["file"] == f'{s["character"]}_{s["script"]}.json' for s in manifest["scripts"])
+        # Each single-script character's file is the bare character name.
+        assert all(s["file"] == f'{s["character"]}.json' for s in manifest["scripts"])
 
 
-def test_export_disambiguates_by_character(pack):
-    """Two characters with a script named 'main' export as cupa_main / reimu_main.
+def test_export_disambiguates_multi_script_characters(temp_root):
+    """A character with several scripts uses <character>_<script>; a character
+    with one script uses the bare character name.
 
-    This is the whole point of the character prefix: the flat slugs never
-    collide even though both scripts are named 'main'.
+    This is the whole point: the character prefix only appears when it has to
+    disambiguate. miku has two scripts -> miku_main / miku_night; rue has one
+    -> rue.json.
     """
-    meta = store.load_project(pack)["meta"]
-    data = build_hikarin(meta, _compiled(pack), store.project_dir(pack))
+    store.create_project("p", {"packName": "P"})
+    store.create_script("p", "miku", "main", {"character": "miku"})
+    store.create_script("p", "miku", "night", {"character": "miku"})
+    store.create_script("p", "rue", "main", {"character": "rue"})
+
+    project = store.load_project("p")
+    data = build_hikarin(project["meta"], _compiled("p"), store.project_dir("p"))
 
     zf = zipfile.ZipFile(io.BytesIO(data))
     names = zf.namelist()
-    assert "cupa_main.json" in names
-    assert "reimu_main.json" in names
-    assert "main.json" not in names  # no bare collision
+    # multi-script character: character-prefixed slugs
+    assert "miku_main.json" in names
+    assert "miku_night.json" in names
+    # single-script character: bare name
+    assert "rue.json" in names
+    assert "rue_main.json" not in names
 
-    manifest = json.loads(zf.read("manifest.json"))
-    script_files = [s["file"] for s in manifest["scripts"]]
-    assert "cupa_main.json" in script_files
-    assert "reimu_main.json" in script_files
+
+def test_single_script_export_is_bare_name(temp_root):
+    """The hikarin export names a single-script character's file miku.json."""
+    store.create_project("p")
+    store.create_script("p", "miku", "miku", {"character": "miku"})
+    project = store.load_project("p")
+    data = build_hikarin(project["meta"], _compiled("p"), store.project_dir("p"))
+    zf = zipfile.ZipFile(io.BytesIO(data))
+    names = zf.namelist()
+    assert "miku.json" in names
+    assert "miku_miku.json" not in names
 
 
 def test_export_refuses_empty_project(temp_root):
@@ -420,6 +439,17 @@ def test_export_refuses_broken_script(temp_root):
 def test_script_slug_is_character_and_script():
     assert script_slug("cupa", "main") == "cupa_main"
     assert script_slug("Hong Meiling", "Night Scene") == "hong_meiling_night_scene"
+
+
+def test_export_script_name_single_vs_multi():
+    from hikarin.exporter import export_script_name
+
+    # Single-script character: bare character name.
+    assert export_script_name("miku", "miku", multi=False) == "miku"
+    assert export_script_name("Hong Meiling", "main", multi=False) == "hong_meiling"
+    # Multi-script character: character-prefixed slug.
+    assert export_script_name("miku", "main", multi=True) == "miku_main"
+    assert export_script_name("miku", "night", multi=True) == "miku_night"
 
 
 def test_story_filename_is_the_trigger():

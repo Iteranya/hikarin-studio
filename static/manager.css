@@ -557,6 +557,23 @@ half file tree, half project list, and a "project" that means three things.
   color: var(--text-faint);
 }
 
+/* A checkbox row: the box and its label sit on one line, the hint below. */
+.field-inline {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 4px 8px;
+}
+.field-inline .checkbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent, #4f8cff);
+}
+.field-inline .field-hint {
+  grid-column: 1 / -1;
+}
+
 .dialog-error {
   margin: 0;
   padding: 8px 10px;
